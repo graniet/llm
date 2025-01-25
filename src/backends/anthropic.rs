@@ -5,13 +5,15 @@
 use std::collections::HashMap;
 
 use crate::{
-    chat::{ChatMessage, ChatProvider, ChatRole, ParametersSchema, Tool},
+    chat::{ChatMessage, ChatProvider, ChatResponse, ChatRole, ParametersSchema, Tool},
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
     error::LLMError,
 };
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
+
+use crate::{FunctionCall, ToolCall};
 
 /// Client for interacting with Anthropic's API.
 ///
@@ -86,6 +88,67 @@ struct AnthropicContent {
     id: Option<String>,
 }
 
+impl std::fmt::Display for AnthropicCompleteResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for content in self.content.iter() {
+            match content.content_type {
+                Some(ref t) if t == "tool_use" => write!(
+                    f,
+                    "{{\n \"name\": {}, \"input\": {:?}\n}}",
+                    content.name.clone().unwrap_or_default(),
+                    content.input.clone().unwrap_or_default()
+                )?,
+                _ => write!(
+                    f,
+                    "{}",
+                    self.content
+                        .iter()
+                        .map(|c| c.text.clone().unwrap_or_default())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )?,
+            }
+        }
+        Ok(())
+    }
+}
+
+impl ChatResponse for AnthropicCompleteResponse {
+    fn texts(&self) -> Option<Vec<String>> {
+        Some(
+            self.content
+                .iter()
+                .map(|c| c.text.clone().unwrap_or_default())
+                .collect(),
+        )
+    }
+
+    fn tool_calls(&self) -> Option<Vec<ToolCall>> {
+        Some(
+            self.content
+                .iter()
+                .filter_map(|c| {
+                    if c.content_type == Some("tool_use".to_string()) {
+                        Some(ToolCall {
+                            id: "".to_string(),
+                            call_type: "".to_string(),
+                            function: FunctionCall {
+                                name: c.name.clone().unwrap_or_default(),
+                                arguments: serde_json::to_string(
+                                    &c.input.clone().unwrap_or_default(),
+                                )
+                                .unwrap_or_default(),
+                            },
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+        )
+    }
+}
+
 impl Anthropic {
     /// Creates a new Anthropic client with the specified configuration.
     ///
@@ -146,7 +209,7 @@ impl ChatProvider for Anthropic {
         &self,
         messages: &[ChatMessage],
         tools: Option<&[Tool]>,
-    ) -> Result<String, LLMError> {
+    ) -> Result<Box<dyn ChatResponse>, LLMError> {
         if self.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Anthropic API key".to_string()));
         }
@@ -204,27 +267,27 @@ impl ChatProvider for Anthropic {
 
         let resp = request.send()?.error_for_status()?;
         let json_resp: AnthropicCompleteResponse = resp.json()?;
+        Ok(Box::new(json_resp))
+        // if json_resp.content.is_empty() {
+        //     return Err(LLMError::ProviderError(
+        //         "No content returned by Anthropic".to_string(),
+        //     ));
+        // }
 
-        if json_resp.content.is_empty() {
-            return Err(LLMError::ProviderError(
-                "No content returned by Anthropic".to_string(),
-            ));
-        }
+        // let outputs = json_resp
+        //     .content
+        //     .iter()
+        //     .map(|c| {
+        //         if c.content_type == Some("tool_use".to_string()) {
+        //             let tool_call = serde_json::to_string(c).unwrap();
+        //             tool_call
+        //         } else {
+        //             c.text.clone().unwrap()
+        //         }
+        //     })
+        //     .collect::<Vec<_>>();
 
-        let outputs = json_resp
-            .content
-            .iter()
-            .map(|c| {
-                if c.content_type == Some("tool_use".to_string()) {
-                    let tool_call = serde_json::to_string(c).unwrap();
-                    tool_call
-                } else {
-                    c.text.clone().unwrap()
-                }
-            })
-            .collect::<Vec<_>>();
-
-        Ok(outputs[0].clone())
+        // Ok(outputs[0].clone())
     }
 
     /// Sends a chat request to Anthropic's API.
@@ -236,7 +299,7 @@ impl ChatProvider for Anthropic {
     /// # Returns
     ///
     /// The provider's response text or an error
-    fn chat(&self, messages: &[ChatMessage]) -> Result<String, LLMError> {
+    fn chat(&self, messages: &[ChatMessage]) -> Result<Box<dyn ChatResponse>, LLMError> {
         self.chat_with_tools(messages, None)
     }
 }
@@ -251,7 +314,14 @@ impl CompletionProvider for Anthropic {
             content: req.prompt.clone(),
         };
         let answer = self.chat(&[chat_message])?;
-        Ok(CompletionResponse { text: answer })
+        Ok(CompletionResponse {
+            text: answer
+                .texts()
+                .unwrap_or_default()
+                .first()
+                .unwrap_or(&String::new())
+                .clone(),
+        })
     }
 }
 

@@ -209,12 +209,20 @@ impl<'a> MultiPromptChain<'a> {
                     req.temperature = step.temperature;
                     req.max_tokens = step.max_tokens;
                     let c = llm.complete(&req)?;
-                    c.text
+                    Box::new(c)
                 }
             };
 
             // 4) Store the response
-            self.memory.insert(step.id.clone(), response);
+            self.memory.insert(
+                step.id.clone(),
+                response
+                    .texts()
+                    .unwrap_or_default()
+                    .first()
+                    .unwrap_or(&String::new())
+                    .clone(),
+            );
         }
         Ok(self.memory)
     }

@@ -139,11 +139,19 @@ impl<'a> PromptChain<'a> {
                     req.max_tokens = step.max_tokens;
                     req.temperature = step.temperature;
                     let resp = self.llm.complete(&req)?;
-                    resp.text
+                    Box::new(resp)
                 }
             };
 
-            self.memory.insert(step.id.clone(), response_text);
+            self.memory.insert(
+                step.id.clone(),
+                response_text
+                    .texts()
+                    .unwrap_or_default()
+                    .first()
+                    .unwrap_or(&String::new())
+                    .clone(),
+            );
         }
 
         Ok(self.memory)

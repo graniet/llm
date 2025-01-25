@@ -14,6 +14,7 @@
 //! The crate is organized into modules that handle different aspects of LLM interactions:
 
 use chat::Tool;
+use serde::{Deserialize, Serialize};
 
 /// Backend implementations for supported LLM providers like OpenAI, Anthropic, etc.
 pub mod backends;
@@ -50,4 +51,24 @@ pub trait LLMProvider:
     fn tools(&self) -> Option<&[Tool]> {
         None
     }
+}
+
+/// Tool call from OpenAI's API.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ToolCall {
+    /// The ID of the tool call.
+    pub id: String,
+    /// The type of the tool call.
+    #[serde(rename = "type")]
+    pub call_type: String,
+    /// The function to call.
+    pub function: FunctionCall,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct FunctionCall {
+    /// The name of the function to call.
+    pub name: String,
+    /// The arguments to pass to the function.
+    pub arguments: String,
 }

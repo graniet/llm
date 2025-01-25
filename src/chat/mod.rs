@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 
-use crate::error::LLMError;
+use crate::{error::LLMError, ToolCall};
 
 /// Role of a participant in a chat conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +71,11 @@ pub struct Tool {
     pub function: FunctionTool,
 }
 
+pub trait ChatResponse: std::fmt::Display + std::fmt::Debug {
+    fn texts(&self) -> Option<Vec<String>>;
+    fn tool_calls(&self) -> Option<Vec<ToolCall>>;
+}
+
 /// Trait for providers that support chat-style interactions.
 pub trait ChatProvider {
     /// Sends a chat request to the provider with a sequence of messages.
@@ -82,7 +87,7 @@ pub trait ChatProvider {
     /// # Returns
     ///
     /// The provider's response text or an error
-    fn chat(&self, messages: &[ChatMessage]) -> Result<String, LLMError> {
+    fn chat(&self, messages: &[ChatMessage]) -> Result<Box<dyn ChatResponse>, LLMError> {
         self.chat_with_tools(messages, None)
     }
 
@@ -100,5 +105,5 @@ pub trait ChatProvider {
         &self,
         messages: &[ChatMessage],
         tools: Option<&[Tool]>,
-    ) -> Result<String, LLMError>;
+    ) -> Result<Box<dyn ChatResponse>, LLMError>;
 }

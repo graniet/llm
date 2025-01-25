@@ -3,7 +3,6 @@
 //! This module provides integration with X.AI's models through their API.
 //! It implements chat and completion capabilities using the X.AI API endpoints.
 
-use crate::chat::Tool;
 #[cfg(feature = "xai")]
 use crate::{
     chat::{ChatMessage, ChatProvider, ChatRole},
@@ -11,6 +10,10 @@ use crate::{
     embedding::EmbeddingProvider,
     error::LLMError,
     LLMProvider,
+};
+use crate::{
+    chat::{ChatResponse, Tool},
+    ToolCall,
 };
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
@@ -79,21 +82,38 @@ struct XAIChatRequest<'a> {
 }
 
 /// Response from X.AI's chat API endpoint.
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct XAIChatResponse {
     /// Array of generated responses
     choices: Vec<XAIChatChoice>,
 }
 
+impl std::fmt::Display for XAIChatResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = self.choices.first().unwrap().message.content.clone();
+        write!(f, "{}", text)
+    }
+}
+
+impl ChatResponse for XAIChatResponse {
+    fn texts(&self) -> Option<Vec<String>> {
+        Some(vec![self.to_string()])
+    }
+
+    fn tool_calls(&self) -> Option<Vec<ToolCall>> {
+        None
+    }
+}
+
 /// Individual response choice from the chat API.
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct XAIChatChoice {
     /// Message content and metadata
     message: XAIChatMsg,
 }
 
 /// Message content from a chat response.
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct XAIChatMsg {
     /// Generated text content
     content: String,
@@ -181,7 +201,7 @@ impl ChatProvider for XAI {
     /// # Returns
     ///
     /// The generated response text, or an error if the request fails.
-    fn chat(&self, messages: &[ChatMessage]) -> Result<String, LLMError> {
+    fn chat(&self, messages: &[ChatMessage]) -> Result<Box<dyn ChatResponse>, LLMError> {
         if self.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing X.AI API key".to_string()));
         }
@@ -230,12 +250,7 @@ impl ChatProvider for XAI {
         let resp = request.send()?.error_for_status()?;
 
         let json_resp: XAIChatResponse = resp.json()?;
-        let first_choice =
-            json_resp.choices.into_iter().next().ok_or_else(|| {
-                LLMError::ProviderError("No choices returned by X.AI".to_string())
-            })?;
-
-        Ok(first_choice.message.content)
+        Ok(Box::new(json_resp))
     }
 
     /// Sends a chat request to X.AI's API with tools.
@@ -252,7 +267,7 @@ impl ChatProvider for XAI {
         &self,
         _messages: &[ChatMessage],
         _tools: Option<&[Tool]>,
-    ) -> Result<String, LLMError> {
+    ) -> Result<Box<dyn ChatResponse>, LLMError> {
         todo!()
     }
 }

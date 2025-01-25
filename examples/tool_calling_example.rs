@@ -1,6 +1,6 @@
 // Import required modules from the LLM library for OpenAI integration
 use llm::{
-    builder::{LLMBackend, LLMBuilder, FunctionBuilder, ParamBuilder},
+    builder::{FunctionBuilder, LLMBackend, LLMBuilder, ParamBuilder},
     chat::{ChatMessage, ChatRole}, // Chat-related structures
 };
 
@@ -22,9 +22,9 @@ fn main() {
                 .param(
                     ParamBuilder::new("url")
                         .type_of("string")
-                        .description("The url to get the weather from for the city")
+                        .description("The url to get the weather from for the city"),
                 )
-                .required(vec!["url".to_string()])
+                .required(vec!["url".to_string()]),
         )
         .build()
         .expect("Failed to build LLM");
@@ -32,7 +32,7 @@ fn main() {
     // Prepare conversation history with example messages
     let messages = vec![ChatMessage {
         role: ChatRole::User,
-        content: "You are a weather assistant. What is the weather in Tokyo? Use the tools that you have available".into(),
+        content: "You are a weather assistant. What is the weather in Tokyo? Always use the tools that you have available".into(),
     }];
 
     // Send chat request and handle the response

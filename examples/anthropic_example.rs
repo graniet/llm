@@ -6,7 +6,7 @@ use llm::{
 
 fn main() {
     // Get Anthropic API key from environment variable or use test key as fallback
-    let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or("anthro-key".into());
+    let api_key: String = std::env::var("ANTHROPIC_API_KEY").unwrap_or("anthro-key".into());
 
     // Initialize and configure the LLM client
     let llm = LLMBuilder::new()

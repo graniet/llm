@@ -1,4 +1,4 @@
-use crate::error::LLMError;
+use crate::{chat::ChatResponse, error::LLMError, ToolCall};
 
 /// A request for text completion from an LLM provider.
 #[derive(Debug, Clone)]
@@ -16,6 +16,16 @@ pub struct CompletionRequest {
 pub struct CompletionResponse {
     /// The generated completion text
     pub text: String,
+}
+
+impl ChatResponse for CompletionResponse {
+    fn texts(&self) -> Option<Vec<String>> {
+        Some(vec![self.text.clone()])
+    }
+
+    fn tool_calls(&self) -> Option<Vec<ToolCall>> {
+        None
+    }
 }
 
 impl CompletionRequest {
@@ -92,4 +102,10 @@ pub trait CompletionProvider {
     ///
     /// The generated completion text or an error
     fn complete(&self, req: &CompletionRequest) -> Result<CompletionResponse, LLMError>;
+}
+
+impl std::fmt::Display for CompletionResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.text)
+    }
 }
