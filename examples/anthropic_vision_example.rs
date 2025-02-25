@@ -1,7 +1,9 @@
+use std::fs;
+
 // Import required modules from the LLM library for Anthropic integration
 use llm::{
     builder::{LLMBackend, LLMBuilder}, // Builder pattern components
-    chat::ChatMessage,                 // Chat-related structures
+    chat::{ChatMessage, ImageMime},    // Chat-related structures
 };
 
 #[tokio::main]
@@ -21,15 +23,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()
         .expect("Failed to build LLM (Anthropic)");
 
+    let content = fs::read("./examples/image001.jpg").expect("The dummy.pdf file should exist");
+
     // Prepare conversation history with example message about Rust concurrency
     let messages = vec![
         ChatMessage::user()
             .content("What is in this image?")
             .build(),
-        ChatMessage::user()
-            .image()
-            .content("/examples/image001.jpg")
-            .build(),
+        ChatMessage::user().image(ImageMime::JPEG, content).build(),
     ];
 
     // Send chat request and handle the response

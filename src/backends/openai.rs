@@ -16,7 +16,6 @@ use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::fs;
 
 /// Client for interacting with OpenAI's API.
 ///
@@ -261,32 +260,33 @@ impl ChatProvider for OpenAI {
                     ChatRole::User => "user",
                     ChatRole::Assistant => "assistant",
                 },
-                content: match m.message_type {
+                content: match &m.message_type {
                     MessageType::Text => Some(vec![MessageContent {
                         message_type: Some("text"),
                         text: Some(&m.content),
                         image_url: None,
                     }]),
-                    MessageType::Image => None,
-                    MessageType::ImageURL => Some(vec![MessageContent {
-                        message_type: Some("image_url"),
+                    MessageType::Image((image_mime, raw_bytes)) => Some(vec![MessageContent {
+                        message_type: Some("image"),
                         text: None,
                         image_url: Some(ImageUrlContent {
-                            url: if m.content.starts_with("http") {
+                            url: {
+                                let base64_image = BASE64.encode(raw_bytes);
+                                // Modify the content: m is now mutable thanks to iter_mut()
+                                m.content = format!(
+                                    "data:{};base64,{}",
+                                    image_mime.mime_type(),
+                                    base64_image
+                                );
                                 &m.content
-                            } else {
-                                match fs::read(&m.content) {
-                                    Ok(bytes) => {
-                                        let base64_image = BASE64.encode(&bytes);
-                                        // Modify the content: m is now mutable thanks to iter_mut()
-                                        m.content =
-                                            format!("data:image/jpeg;base64,{}", base64_image);
-                                        &m.content
-                                    }
-                                    Err(_) => &m.content,
-                                }
                             },
                         }),
+                    }]),
+                    MessageType::Pdf(_) => unimplemented!(),
+                    MessageType::ImageURL(ref url) => Some(vec![MessageContent {
+                        message_type: Some("image_url"),
+                        text: None,
+                        image_url: Some(ImageUrlContent { url }),
                     }]),
                 },
             })

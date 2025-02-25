@@ -15,6 +15,31 @@ pub enum ChatRole {
     Assistant,
 }
 
+/// The supported MIME type of an image.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ImageMime {
+    /// JPEG image
+    JPEG,
+    /// PNG image
+    PNG,
+    /// GIF image
+    GIF,
+    /// WebP image
+    WEBP,
+}
+
+impl ImageMime {
+    pub fn mime_type(&self) -> &'static str {
+        match self {
+            ImageMime::JPEG => "image/jpeg",
+            ImageMime::PNG => "image/png",
+            ImageMime::GIF => "image/gif",
+            ImageMime::WEBP => "image/webp",
+        }
+    }
+}
+
 /// The type of a message in a chat conversation.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum MessageType {
@@ -22,9 +47,11 @@ pub enum MessageType {
     #[default]
     Text,
     /// An image message
-    Image,
+    Image((ImageMime, Vec<u8>)),
+    /// PDF message
+    Pdf(Vec<u8>),
     /// An image URL message
-    ImageURL,
+    ImageURL(String),
 }
 
 /// The type of reasoning effort for a message in a chat conversation.
@@ -185,14 +212,20 @@ impl ChatMessageBuilder {
     }
 
     /// Set the message type as Image
-    pub fn image(mut self) -> Self {
-        self.message_type = MessageType::Image;
+    pub fn image(mut self, image_mime: ImageMime, raw_bytes: Vec<u8>) -> Self {
+        self.message_type = MessageType::Image((image_mime, raw_bytes));
+        self
+    }
+
+    /// Set the message type as Image
+    pub fn pdf(mut self, raw_bytes: Vec<u8>) -> Self {
+        self.message_type = MessageType::Pdf(raw_bytes);
         self
     }
 
     /// Set the message type as ImageURL
-    pub fn image_url(mut self) -> Self {
-        self.message_type = MessageType::ImageURL;
+    pub fn image_url(mut self, url: impl Into<String>) -> Self {
+        self.message_type = MessageType::ImageURL(url.into());
         self
     }
 

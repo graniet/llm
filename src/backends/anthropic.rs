@@ -3,7 +3,6 @@
 //! This module provides integration with Anthropic's Claude models through their API.
 
 use std::collections::HashMap;
-use std::fs;
 
 use crate::{
     chat::{
@@ -12,13 +11,12 @@ use crate::{
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
     error::LLMError,
+    FunctionCall, ToolCall,
 };
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-
-use crate::{FunctionCall, ToolCall};
 
 /// Client for interacting with Anthropic's API.
 ///
@@ -35,7 +33,6 @@ pub struct Anthropic {
     pub top_p: Option<f32>,
     pub top_k: Option<u32>,
     pub tools: Option<Vec<Tool>>,
-    pub default_image_type: String,
     pub reasoning: bool,
     pub thinking_budget_tokens: Option<u32>,
     client: Client,
@@ -142,11 +139,9 @@ impl std::fmt::Display for AnthropicCompleteResponse {
                     content.name.clone().unwrap_or_default(),
                     content.input.clone().unwrap_or_default()
                 )?,
-                Some(ref t) if t == "thinking" => write!(
-                    f,
-                    "{}",
-                    content.thinking.clone().unwrap_or_default()
-                )?,
+                Some(ref t) if t == "thinking" => {
+                    write!(f, "{}", content.thinking.clone().unwrap_or_default())?
+                }
                 _ => write!(
                     f,
                     "{}",
@@ -213,22 +208,6 @@ impl ChatResponse for AnthropicCompleteResponse {
 }
 
 impl Anthropic {
-    /// Encodes binary image data to base64
-    fn encode_image_base64(data: &[u8]) -> String {
-        BASE64.encode(data)
-    }
-
-    /// Reads and encodes an image file to base64
-    fn read_and_encode_image(path: &str) -> String {
-        match fs::read(path) {
-            Ok(bytes) => Self::encode_image_base64(&bytes),
-            Err(e) => {
-                eprintln!("Warning: Failed to read image: {}", e);
-                String::new()
-            }
-        }
-    }
-
     /// Creates a new Anthropic client with the specified configuration.
     ///
     /// # Arguments
@@ -240,7 +219,7 @@ impl Anthropic {
     /// * `timeout_seconds` - Request timeout in seconds (defaults to 30)
     /// * `system` - System prompt (defaults to "You are a helpful assistant.")
     /// * `stream` - Whether to stream responses (defaults to false)
-    /// * 
+    /// *
     /// * `thinking_budget_tokens` - Budget tokens for thinking (optional)
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -274,7 +253,6 @@ impl Anthropic {
             tools,
             reasoning: reasoning.unwrap_or(false),
             thinking_budget_tokens,
-            default_image_type: "image/jpeg".to_string(),
             client: builder.build().expect("Failed to build reqwest Client"),
         }
     }
@@ -308,30 +286,30 @@ impl ChatProvider for Anthropic {
                     ChatRole::User => "user",
                     ChatRole::Assistant => "assistant",
                 },
-                content: match m.message_type {
+                content: match &m.message_type {
                     MessageType::Text => vec![MessageContent {
                         message_type: Some("text"),
                         text: Some(&m.content),
                         image_url: None,
                         source: None,
                     }],
-                    MessageType::Image => {
-                        let encoded = Self::read_and_encode_image(&m.content);
+                    MessageType::Pdf(_) => unimplemented!(),
+                    MessageType::Image((image_mime, raw_bytes)) => {
                         vec![MessageContent {
                             message_type: Some("image"),
                             text: None,
                             image_url: None,
                             source: Some(ImageSource {
                                 source_type: "base64",
-                                media_type: &self.default_image_type,
-                                data: encoded,
+                                media_type: image_mime.mime_type(),
+                                data: BASE64.encode(raw_bytes),
                             }),
                         }]
                     }
-                    MessageType::ImageURL => vec![MessageContent {
+                    MessageType::ImageURL(ref url) => vec![MessageContent {
                         message_type: Some("image_url"),
                         text: None,
-                        image_url: Some(ImageUrlContent { url: &m.content }),
+                        image_url: Some(ImageUrlContent { url }),
                         source: None,
                     }],
                 },
@@ -358,7 +336,7 @@ impl ChatProvider for Anthropic {
             Some(ThinkingConfig {
                 thinking_type: "enabled".to_string(),
                 budget_tokens: self.thinking_budget_tokens.unwrap_or(16000),
-            })  
+            })
         } else {
             None
         };
