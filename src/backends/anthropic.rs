@@ -142,11 +142,9 @@ impl std::fmt::Display for AnthropicCompleteResponse {
                     content.name.clone().unwrap_or_default(),
                     content.input.clone().unwrap_or_default()
                 )?,
-                Some(ref t) if t == "thinking" => write!(
-                    f,
-                    "{}",
-                    content.thinking.clone().unwrap_or_default()
-                )?,
+                Some(ref t) if t == "thinking" => {
+                    write!(f, "{}", content.thinking.clone().unwrap_or_default())?
+                }
                 _ => write!(
                     f,
                     "{}",
@@ -240,7 +238,7 @@ impl Anthropic {
     /// * `timeout_seconds` - Request timeout in seconds (defaults to 30)
     /// * `system` - System prompt (defaults to "You are a helpful assistant.")
     /// * `stream` - Whether to stream responses (defaults to false)
-    /// * 
+    /// *
     /// * `thinking_budget_tokens` - Budget tokens for thinking (optional)
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -315,6 +313,7 @@ impl ChatProvider for Anthropic {
                         image_url: None,
                         source: None,
                     }],
+                    MessageType::Pdf(_) => unimplemented!(),
                     MessageType::Image => {
                         let encoded = Self::read_and_encode_image(&m.content);
                         vec![MessageContent {
@@ -358,7 +357,7 @@ impl ChatProvider for Anthropic {
             Some(ThinkingConfig {
                 thinking_type: "enabled".to_string(),
                 budget_tokens: self.thinking_budget_tokens.unwrap_or(16000),
-            })  
+            })
         } else {
             None
         };

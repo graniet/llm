@@ -41,13 +41,14 @@
 //! ```
 
 use crate::{
-    chat::{ChatMessage, ChatProvider, ChatResponse, ChatRole, Tool},
+    chat::{ChatMessage, ChatProvider, ChatResponse, ChatRole, MessageType, Tool},
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
     error::LLMError,
     LLMProvider,
 };
 use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
@@ -101,9 +102,17 @@ struct GoogleChatContent<'a> {
 
 /// Text content within a chat message
 #[derive(Serialize)]
-struct GoogleContentPart<'a> {
+#[serde(rename_all = "snake_case")]
+enum GoogleContentPart<'a> {
     /// The actual text content
-    text: &'a str,
+    Text(&'a str),
+    InlineData(GoogleInlineData),
+}
+
+#[derive(Serialize)]
+struct GoogleInlineData {
+    mime_type: String,
+    data: String,
 }
 
 /// Configuration parameters for text generation
@@ -256,13 +265,13 @@ impl ChatProvider for Google {
             return Err(LLMError::AuthError("Missing Google API key".to_string()));
         }
 
-        let mut chat_contents = Vec::new();
+        let mut chat_contents = Vec::with_capacity(messages.len());
 
         // Add system message if present
         if let Some(system) = &self.system {
             chat_contents.push(GoogleChatContent {
                 role: "user",
-                parts: vec![GoogleContentPart { text: system }],
+                parts: vec![GoogleContentPart::Text(system)],
             });
         }
 
@@ -273,7 +282,17 @@ impl ChatProvider for Google {
                     ChatRole::User => "user",
                     ChatRole::Assistant => "model",
                 },
-                parts: vec![GoogleContentPart { text: &msg.content }],
+                parts: match &msg.message_type {
+                    MessageType::Text => vec![GoogleContentPart::Text(&msg.content)],
+                    MessageType::Image => unimplemented!(),
+                    MessageType::ImageURL => unimplemented!(),
+                    MessageType::Pdf(raw_bytes) => {
+                        vec![GoogleContentPart::InlineData(GoogleInlineData {
+                            mime_type: "application/pdf".to_string(),
+                            data: BASE64.encode(raw_bytes),
+                        })]
+                    }
+                },
             });
         }
 
@@ -372,7 +391,7 @@ impl EmbeddingProvider for Google {
             let req_body = GoogleEmbeddingRequest {
                 model: "models/text-embedding-004",
                 content: GoogleEmbeddingContent {
-                    parts: vec![GoogleContentPart { text: &text }],
+                    parts: vec![GoogleContentPart::Text(&text)],
                 },
             };
 

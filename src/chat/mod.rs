@@ -23,6 +23,8 @@ pub enum MessageType {
     Text,
     /// An image message
     Image,
+    /// PDF message
+    Pdf(Vec<u8>),
     /// An image URL message
     ImageURL,
 }
@@ -187,6 +189,12 @@ impl ChatMessageBuilder {
     /// Set the message type as Image
     pub fn image(mut self) -> Self {
         self.message_type = MessageType::Image;
+        self
+    }
+
+    /// Set the message type as Image
+    pub fn pdf(mut self, raw_bytes: Vec<u8>) -> Self {
+        self.message_type = MessageType::Pdf(raw_bytes);
         self
     }
 

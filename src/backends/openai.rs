@@ -268,6 +268,7 @@ impl ChatProvider for OpenAI {
                         image_url: None,
                     }]),
                     MessageType::Image => None,
+                    MessageType::Pdf(_) => unimplemented!(),
                     MessageType::ImageURL => Some(vec![MessageContent {
                         message_type: Some("image_url"),
                         text: None,
