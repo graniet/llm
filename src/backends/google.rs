@@ -12,7 +12,7 @@
 //! # Example
 //! ```no_run
 //! use llm::backends::google::Google;
-//! use llm::chat::{ChatMessage, ChatRole, ChatProvider};
+//! use llm::chat::{ChatMessage, ChatRole, ChatProvider, MessageType};
 //!
 //! #[tokio::main]
 //! async fn main() {
@@ -31,6 +31,7 @@
 //! let messages = vec![
 //!     ChatMessage {
 //!         role: ChatRole::User,
+//!         message_type: MessageType::Text,
 //!         content: "Hello!".into()
 //!     }
 //! ];

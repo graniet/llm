@@ -1,0 +1,22 @@
+name: example-chain
+description: A chain that demonstrates multi-step LLM processing
+default_provider: openai:gpt-4o
+steps:
+- id: topic
+  template: Suggest an interesting technical topic to explore. Answer with just the topic name.
+  provider_id: null
+  mode: chat
+  temperature: 0.7
+  max_tokens: 50
+- id: details
+  template: List 3 key aspects of {{topic}} that developers should know. Format as bullet points.
+  provider_id: null
+  mode: chat
+  temperature: 0.5
+  max_tokens: 200
+- id: code_example
+  template: 'Based on {{topic}} and these aspects: {{details}}, provide a code example that demonstrates one of these aspects.'
+  provider_id: null
+  mode: chat
+  temperature: 0.3
+  max_tokens: 400
