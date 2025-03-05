@@ -116,6 +116,12 @@ impl<'a> PromptChain<'a> {
             memory: HashMap::new(),
         }
     }
+    
+    /// Sets initial memory values for the chain
+    pub fn with_memory(mut self, memory: HashMap<String, String>) -> Self {
+        self.memory.extend(memory);
+        self
+    }
 
     /// Adds a step to the chain
     pub fn step(mut self, step: ChainStep) -> Self {

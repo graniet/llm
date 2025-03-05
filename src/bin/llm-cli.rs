@@ -2,12 +2,17 @@ use clap::Parser;
 use llm::builder::{LLMBackend, LLMBuilder};
 use llm::chat::{ChatMessage, ImageMime};
 use llm::secret_store::SecretStore;
+
+#[path = "tests/mod.rs"]
+mod tests;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use std::str::FromStr;
 use std::io::{self, Write, Read, IsTerminal};
 use colored::*;
 use spinners::{Spinner, Spinners};
+use comfy_table::{Table, ContentArrangement, Cell};
+use comfy_table::presets::UTF8_FULL;
 
 /// Command line arguments for the LLM CLI
 #[derive(Parser)]
@@ -89,7 +94,10 @@ fn detect_image_mime(data: &[u8]) -> Option<ImageMime> {
 fn get_provider_info(args: &CliArgs) -> Option<(String, Option<String>)> {
     if let Some(default_provider) = SecretStore::new().ok().and_then(|store| store.get_default_provider().cloned()) {
         let parts: Vec<&str> = default_provider.split(':').collect();
+        // Only show default provider in interactive mode
+    if io::stdin().is_terminal() && !matches!(args.command.as_deref(), Some("set") | Some("get") | Some("delete") | Some("default")) {
         println!("Default provider: {}", default_provider);
+    }
         return Some((parts[0].to_string(), parts.get(1).map(|s| s.to_string())));
     }
     
@@ -183,10 +191,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let (Some(key), Some(value)) = (args.provider_or_key.as_deref(), args.prompt_or_value.as_deref()) {
                     let mut store = SecretStore::new()?;
                     store.set(key, value)?;
-                    println!("{} Secret '{}' has been set.", "✓".bright_green(), key);
+                    // Create success table for secret setting
+                    let mut success_table = Table::new();
+                    success_table
+                        .load_preset(UTF8_FULL)
+                        .set_content_arrangement(ContentArrangement::Dynamic)
+                        .set_width(80);
+                    
+                    success_table.add_row(vec![
+                        Cell::new(format!("✅ Secret '{}' has been set.", key)).fg(comfy_table::Color::Green)
+                    ]);
+                    
+                    println!("{}", success_table);
                     return Ok(());
                 }
-                eprintln!("{} Usage: llm set <key> <value>", "Error:".bright_red());
+                // Create usage error table
+                let mut error_table = Table::new();
+                error_table
+                    .load_preset(UTF8_FULL)
+                    .set_content_arrangement(ContentArrangement::Dynamic)
+                    .set_width(80);
+                
+                error_table.add_row(vec![
+                    Cell::new("❌ Error").fg(comfy_table::Color::Red).add_attribute(comfy_table::Attribute::Bold)
+                ]);
+                
+                error_table.add_row(vec![
+                    Cell::new("Usage: llm set <key> <value>").fg(comfy_table::Color::Red)
+                ]);
+                
+                println!("{}", error_table);
                 return Ok(());
             }
             "get" => {
@@ -281,35 +315,65 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let messages = process_input(&input, prompt);
 
+        // In piped mode, don't show spinner
         match provider.chat(&messages).await {
             Ok(response) => {
                 if let Some(text) = response.text() {
+                    // For piped input/output, just print the raw text without table formatting
                     println!("{}", text);
                 }
             }
             Err(e) => {
+                // For piped input/output, use simple error format
                 eprintln!("Error: {}", e);
             }
         }
         return Ok(());
     }
 
-    println!("{}", "llm - Interactive Chat".bright_cyan());
-    println!("Provider: {}", provider_name.bright_green());
-    println!("{}", "Type 'exit' to quit".bright_black());
-    println!("{}", "─".repeat(50).bright_black());
+    // Create welcome header with comfy_table
+    let mut header_table = Table::new();
+    header_table
+        .load_preset(UTF8_FULL)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_width(80);
+    
+    header_table.add_row(vec![
+        Cell::new("llm - Interactive Chat").fg(comfy_table::Color::Cyan).add_attribute(comfy_table::Attribute::Bold)
+    ]);
+    
+    header_table.add_row(vec![
+        Cell::new(format!("Provider: {}", provider_name)).fg(comfy_table::Color::Green)
+    ]);
+    
+    header_table.add_row(vec![
+        Cell::new("Type 'exit' to quit").fg(comfy_table::Color::Grey)
+    ]);
+    
+    println!("{}", header_table);
 
     let mut rl = DefaultEditor::new()?;
     let mut messages: Vec<ChatMessage> = Vec::new();
 
     loop {
         io::stdout().flush()?;
-        let readline = rl.readline("> ");
+        let readline = rl.readline("💬 > ");
         match readline {
             Ok(line) => {
                 let trimmed = line.trim();
                 if trimmed.is_empty() || trimmed.to_lowercase() == "exit" {
-                    println!("{}", "👋 Goodbye!".bright_cyan());
+                    // Create goodbye message table
+    let mut goodbye_table = Table::new();
+    goodbye_table
+        .load_preset(UTF8_FULL)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_width(80);
+    
+    goodbye_table.add_row(vec![
+        Cell::new("👋 Goodbye!").fg(comfy_table::Color::Cyan).add_attribute(comfy_table::Attribute::Bold)
+    ]);
+    
+    println!("{}", goodbye_table);
                     break;
                 }
                 let _ = rl.add_history_entry(trimmed);
@@ -317,35 +381,107 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let user_message = ChatMessage::user().content(trimmed.to_string()).build();
                 messages.push(user_message);
 
-                let mut sp = Spinner::new(Spinners::Dots12, "Thinking...".bright_magenta().to_string());
+                let mut sp = Spinner::new(Spinners::Dots12, "🤔 Thinking...".bright_magenta().to_string());
 
                 match provider.chat(&messages).await {
                     Ok(response) => {
                         sp.stop();
                         print!("\r\x1B[K");
                         if let Some(text) = response.text() {
-                            println!("{} {}", "> Assistant:".bright_green(), text);
+                            // Create response table
+                            let mut response_table = Table::new();
+                            response_table
+                                .load_preset(UTF8_FULL)
+                                .set_content_arrangement(ContentArrangement::Dynamic)
+                                .set_width(80);
+                            
+                            // Add assistant header row
+                            response_table.add_row(vec![
+                                Cell::new("📢 Assistant").fg(comfy_table::Color::Green).add_attribute(comfy_table::Attribute::Bold)
+                            ]);
+                            
+                            // Clone the text to avoid ownership issues
+                            let text_clone = text.clone();
+                            
+                            // Add response content row
+                            response_table.add_row(vec![
+                                Cell::new(text_clone)
+                            ]);
+                            
+                            println!("{}", response_table);
+                            
                             let assistant_message =
                                 ChatMessage::assistant().content(text).build();
                             messages.push(assistant_message);
                         } else {
-                            println!("{}", "> Assistant: (no response)".bright_red());
+                            // Create error table for no response
+                            let mut error_table = Table::new();
+                            error_table
+                                .load_preset(UTF8_FULL)
+                                .set_content_arrangement(ContentArrangement::Dynamic)
+                                .set_width(80);
+                            
+                            error_table.add_row(vec![
+                                Cell::new("❌ Assistant: (no response)").fg(comfy_table::Color::Red)
+                            ]);
+                            
+                            println!("{}", error_table);
                         }
-                        println!("{}", "─".repeat(50).bright_black());
                     }
                     Err(e) => {
                         sp.stop();
-                        eprintln!("{} {}", "Error:".bright_red(), e);
-                        println!("{}", "─".repeat(50).bright_black());
+                        
+                        // Create error table
+                        let mut error_table = Table::new();
+                        error_table
+                            .load_preset(UTF8_FULL)
+                            .set_content_arrangement(ContentArrangement::Dynamic)
+                            .set_width(80);
+                        
+                        error_table.add_row(vec![
+                            Cell::new("❌ Error").fg(comfy_table::Color::Red).add_attribute(comfy_table::Attribute::Bold)
+                        ]);
+                        
+                        error_table.add_row(vec![
+                            Cell::new(e.to_string()).fg(comfy_table::Color::Red)
+                        ]);
+                        
+                        println!("{}", error_table);
                     }
                 }
             }
             Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => {
-                println!("\n{}", "👋 Goodbye!".bright_cyan());
+                // Create goodbye message table
+                let mut goodbye_table = Table::new();
+                goodbye_table
+                    .load_preset(UTF8_FULL)
+                    .set_content_arrangement(ContentArrangement::Dynamic)
+                    .set_width(80);
+                
+                goodbye_table.add_row(vec![
+                    Cell::new("👋 Goodbye!").fg(comfy_table::Color::Cyan).add_attribute(comfy_table::Attribute::Bold)
+                ]);
+                
+                println!("\n{}", goodbye_table);
                 break;
             }
             Err(err) => {
-                eprintln!("{} {:?}", "Error:".bright_red(), err);
+                // Create error table
+                let mut error_table = Table::new();
+                error_table
+                    .load_preset(UTF8_FULL)
+                    .set_content_arrangement(ContentArrangement::Dynamic)
+                    .set_width(80);
+                
+                error_table.add_row(vec![
+                    Cell::new("❌ Error").fg(comfy_table::Color::Red).add_attribute(comfy_table::Attribute::Bold)
+                ]);
+                
+                error_table.add_row(vec![
+                    Cell::new(format!("{:?}", err)).fg(comfy_table::Color::Red)
+                ]);
+                
+                println!("{}", error_table);
                 break;
             }
         }

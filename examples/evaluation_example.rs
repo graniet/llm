@@ -8,7 +8,7 @@
 
 use llm::{
     builder::{LLMBackend, LLMBuilder},
-    chat::{ChatMessage, ChatRole},
+    chat::ChatMessage,
     evaluator::{EvalResult, LLMEvaluator},
 };
 

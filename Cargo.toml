@@ -21,7 +21,7 @@ xai = []
 phind = []
 google = []
 groq = []
-cli = ["full", "dep:clap", "dep:rustyline", "dep:colored", "dep:spinners"]
+cli = ["full", "dep:clap", "dep:rustyline", "dep:colored", "dep:spinners", "dep:comfy-table"]
 api = ["dep:axum", "dep:tower-http", "dep:uuid"]
 
 [dependencies]
@@ -37,15 +37,26 @@ base64 = "0.22.1"
 futures = "0.3"
 clap = { version = "4", features = ["derive"], optional = true }
 rustyline = { version = "15", optional = true }
+edit = "0.1"
 colored = { version = "3.0.0", optional = true }
 spinners = { version = "4.1", optional = true }
+comfy-table = { version = "7.1.0", optional = true }
+chrono = "0.4"
+hostname = "0.3"
 serde_yaml = "0.9"
 dirs = "6.0.0"
+textwrap = "0.16.2"
 
 [[bin]]
 name = "llm"
 path = "src/bin/llm-cli.rs"
 required-features = ["cli"]
 
+[[bin]]
+name = "llm-chain" 
+path = "src/bin/llm-chain.rs"
+required-features = ["cli"]
+
 [dev-dependencies]
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+tempfile = "3.8.1"
