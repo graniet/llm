@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Client for interacting with OpenAI's API.
 ///
@@ -35,6 +36,8 @@ pub struct OpenAI {
     pub embedding_encoding_format: Option<String>,
     pub embedding_dimensions: Option<u32>,
     pub reasoning_effort: Option<String>,
+    /// JSON schema for structured output
+    pub json_schema: Option<Value>,
     client: Client,
 }
 
@@ -74,7 +77,7 @@ struct OpenAIEmbeddingRequest {
 }
 
 /// Request payload for OpenAI's chat API endpoint.
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 struct OpenAIChatRequest<'a> {
     model: &'a str,
     messages: Vec<OpenAIChatMessage<'a>>,
@@ -91,6 +94,8 @@ struct OpenAIChatRequest<'a> {
     tools: Option<Vec<Tool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<OpenAIResponseFormat>,
 }
 
 impl std::fmt::Display for ToolCall {
@@ -143,6 +148,27 @@ struct OpenAIEmbeddingResponse {
     data: Vec<OpenAIEmbeddingData>,
 }
 
+/// An object specifying the format that the model must output.
+///Setting to `{ "type": "json_schema", "json_schema": {...} }` enables Structured Outputs which ensures the model will match your supplied JSON schema. Learn more in the [Structured Outputs guide](https://platform.openai.com/docs/guides/structured-outputs).
+/// Setting to `{ "type": "json_object" }` enables the older JSON mode, which ensures the message the model generates is valid JSON. Using `json_schema` is preferred for models that support it.
+#[derive(Deserialize, Debug, Serialize)]
+enum OpenAIResponseType {
+    #[serde(rename = "text")]
+    Text,
+    #[serde(rename = "json_schema")]
+    JsonSchema,
+    #[serde(rename = "json_object")]
+    JsonObject,
+}
+
+#[derive(Deserialize, Debug, Serialize)]
+struct OpenAIResponseFormat {
+    #[serde(rename = "type")]
+    response_type: OpenAIResponseType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    json_schema: Option<Value>,
+}
+
 impl ChatResponse for OpenAIChatResponse {
     fn text(&self) -> Option<String> {
         self.choices.first().and_then(|c| c.message.content.clone())
@@ -191,6 +217,7 @@ impl OpenAI {
     /// * `timeout_seconds` - Request timeout in seconds
     /// * `system` - System prompt
     /// * `stream` - Whether to stream responses
+    /// * `json_schema` - JSON schema for structured output
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         api_key: impl Into<String>,
@@ -206,6 +233,7 @@ impl OpenAI {
         embedding_dimensions: Option<u32>,
         tools: Option<Vec<Tool>>,
         reasoning_effort: Option<String>,
+        json_schema: Option<Value>,
     ) -> Self {
         let mut builder = Client::builder();
         if let Some(sec) = timeout_seconds {
@@ -226,6 +254,7 @@ impl OpenAI {
             embedding_dimensions,
             client: builder.build().expect("Failed to build reqwest Client"),
             reasoning_effort,
+            json_schema,
         }
     }
 }
@@ -306,6 +335,14 @@ impl ChatProvider for OpenAI {
             );
         }
 
+        // OpenAI's structured output has some [odd requirements](https://platform.openai.com/docs/guides/structured-outputs?api-mode=chat&lang=curl#supported-schemas).
+        // There's currently no check for these, so we'll leave it up to the user to provide a valid schema.
+        let response_format: Option<OpenAIResponseFormat> =
+            self.json_schema.as_ref().map(|s| OpenAIResponseFormat {
+                response_type: OpenAIResponseType::JsonSchema,
+                json_schema: Some(s.clone()),
+            });
+
         let body = OpenAIChatRequest {
             model: &self.model,
             messages: openai_msgs,
@@ -316,6 +353,7 @@ impl ChatProvider for OpenAI {
             top_k: self.top_k,
             tools: tools.map(|t| t.to_vec()),
             reasoning_effort: self.reasoning_effort.clone(),
+            response_format,
         };
 
         let mut request = self

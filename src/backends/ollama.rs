@@ -11,6 +11,7 @@ use crate::{
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::ToolCall;
 
@@ -28,6 +29,8 @@ pub struct Ollama {
     pub stream: Option<bool>,
     pub top_p: Option<f32>,
     pub top_k: Option<u32>,
+    /// JSON schema for structured output
+    pub json_schema: Option<Value>,
     client: Client,
 }
 
@@ -38,6 +41,7 @@ struct OllamaChatRequest<'a> {
     messages: Vec<OllamaChatMessage<'a>>,
     stream: bool,
     options: Option<OllamaOptions>,
+    format: Option<OllamaResponseFormat>,
 }
 
 #[derive(Serialize)]
@@ -114,6 +118,20 @@ struct OllamaEmbeddingResponse {
     embeddings: Vec<Vec<f32>>,
 }
 
+#[derive(Deserialize, Debug, Serialize)]
+#[serde(untagged)]
+enum OllamaResponseType {
+    #[serde(rename = "json")]
+    Json,
+    StructuredOutput(Value),
+}
+
+#[derive(Deserialize, Debug, Serialize)]
+struct OllamaResponseFormat {
+    #[serde(flatten)]
+    format: OllamaResponseType,
+}
+
 impl Ollama {
     /// Creates a new Ollama client with the specified configuration.
     ///
@@ -127,6 +145,7 @@ impl Ollama {
     /// * `timeout_seconds` - Request timeout in seconds
     /// * `system` - System prompt
     /// * `stream` - Whether to stream responses
+    /// * `json_schema` - JSON schema for structured output
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         base_url: impl Into<String>,
@@ -139,6 +158,7 @@ impl Ollama {
         stream: Option<bool>,
         top_p: Option<f32>,
         top_k: Option<u32>,
+        json_schema: Option<Value>,
     ) -> Self {
         let mut builder = Client::builder();
         if let Some(sec) = timeout_seconds {
@@ -155,6 +175,7 @@ impl Ollama {
             stream,
             top_p,
             top_k,
+            json_schema,
             client: builder.build().expect("Failed to build reqwest Client"),
         }
     }
@@ -197,6 +218,15 @@ impl ChatProvider for Ollama {
             );
         }
 
+        // Set the format to structured output if a JSON schema is provided
+        // See the [Ollama Structured Output instructions](https://ollama.com/blog/structured-outputs)
+        let format: Option<OllamaResponseFormat> =
+            self.json_schema
+                .as_ref()
+                .map(|schema| OllamaResponseFormat {
+                    format: OllamaResponseType::StructuredOutput(schema.clone()),
+                });
+
         let req_body = OllamaChatRequest {
             model: self.model.clone(),
             messages: chat_messages,
@@ -205,6 +235,7 @@ impl ChatProvider for Ollama {
                 top_p: self.top_p,
                 top_k: self.top_k,
             }),
+            format,
         };
 
         let url = format!("{}/api/chat", self.base_url);

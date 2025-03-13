@@ -18,6 +18,7 @@ use crate::{
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Client for interacting with X.AI's API.
 ///
@@ -46,6 +47,8 @@ pub struct XAI {
     pub embedding_encoding_format: Option<String>,
     /// Embedding dimensions
     pub embedding_dimensions: Option<u32>,
+    /// JSON schema for structured output
+    pub json_schema: Option<Value>,
     /// HTTP client for making API requests
     client: Client,
 }
@@ -80,6 +83,8 @@ struct XAIChatRequest<'a> {
     /// Top-k sampling parameter
     #[serde(skip_serializing_if = "Option::is_none")]
     top_k: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<XAIResponseFormat>,
 }
 
 /// Response from X.AI's chat API endpoint.
@@ -138,6 +143,28 @@ struct XAIEmbeddingResponse {
     data: Vec<XAIEmbeddingData>,
 }
 
+#[derive(Deserialize, Debug, Serialize)]
+enum XAIResponseType {
+    #[serde(rename = "text")]
+    Text,
+    #[serde(rename = "json_schema")]
+    JsonSchema,
+    #[serde(rename = "json_object")]
+    JsonObject,
+}
+
+/// An object specifying the format that the model must output.
+/// Setting to `{ "type": "json_schema", "json_schema": {...} }` enables Structured Outputs which ensures the model will match your supplied JSON schema. Learn more in the [Structured Outputs guide](https://platform.openai.com/docs/guides/structured-outputs).
+/// Setting to `{ "type": "json_object" }` enables the older JSON mode, which ensures the message the model generates is valid JSON. Using `json_schema` is preferred for models that support it.
+/// The structured outputs feature is only supported for the `grok-2-latest` model.
+#[derive(Deserialize, Debug, Serialize)]
+struct XAIResponseFormat {
+    #[serde(rename = "type")]
+    response_type: XAIResponseType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    json_schema: Option<Value>,
+}
+
 impl XAI {
     /// Creates a new X.AI client with the specified configuration.
     ///
@@ -152,6 +179,7 @@ impl XAI {
     /// * `stream` - Whether to enable streaming responses
     /// * `top_p` - Top-p sampling parameter
     /// * `top_k` - Top-k sampling parameter
+    /// * `json_schema` - JSON schema for structured output
     ///
     /// # Returns
     ///
@@ -169,6 +197,7 @@ impl XAI {
         top_k: Option<u32>,
         embedding_encoding_format: Option<String>,
         embedding_dimensions: Option<u32>,
+        json_schema: Option<Value>,
     ) -> Self {
         let mut builder = Client::builder();
         if let Some(sec) = timeout_seconds {
@@ -186,6 +215,7 @@ impl XAI {
             top_k,
             embedding_encoding_format,
             embedding_dimensions,
+            json_schema,
             client: builder.build().expect("Failed to build reqwest Client"),
         }
     }
@@ -228,6 +258,15 @@ impl ChatProvider for XAI {
             );
         }
 
+        // OpenAI's structured output has some [odd requirements](https://platform.openai.com/docs/guides/structured-outputs?api-mode=chat&lang=curl#supported-schemas).
+        // There's currently no check for these, so we'll leave it up to the user to provide a valid schema.
+        // Unknown if XAI requires these too, but since it copies everything else from OpenAI, it's likely.
+        let response_format: Option<XAIResponseFormat> =
+            self.json_schema.as_ref().map(|s| XAIResponseFormat {
+                response_type: XAIResponseType::JsonSchema,
+                json_schema: Some(s.clone()),
+            });
+
         let body = XAIChatRequest {
             model: &self.model,
             messages: xai_msgs,
@@ -236,7 +275,11 @@ impl ChatProvider for XAI {
             stream: self.stream.unwrap_or(false),
             top_p: self.top_p,
             top_k: self.top_k,
+            response_format,
         };
+
+        let body_text = serde_json::to_string(&body).unwrap();
+        dbg!(body_text);
 
         let mut request = self
             .client

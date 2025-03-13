@@ -3,6 +3,8 @@
 //! This module provides a flexible builder pattern for creating and configuring
 //! LLM (Large Language Model) provider instances with various settings and options.
 
+use serde_json::Value;
+
 use crate::{
     chat::{FunctionTool, ParameterProperty, ParametersSchema, ReasoningEffort, Tool},
     error::LLMError,
@@ -74,7 +76,9 @@ impl std::str::FromStr for LLMBackend {
             "phind" => Ok(LLMBackend::Phind),
             "google" => Ok(LLMBackend::Google),
             "groq" => Ok(LLMBackend::Groq),
-            _ => Err(LLMError::InvalidRequest(format!("Unknown LLM backend: {s}")))
+            _ => Err(LLMError::InvalidRequest(format!(
+                "Unknown LLM backend: {s}"
+            ))),
         }
     }
 }
@@ -123,6 +127,8 @@ pub struct LLMBuilder {
     reasoning_effort: Option<String>,
     /// reasoning_budget_tokens
     reasoning_budget_tokens: Option<u32>,
+    /// JSON schema for structured output
+    json_schema: Option<Value>,
 }
 
 impl LLMBuilder {
@@ -230,6 +236,12 @@ impl LLMBuilder {
         self
     }
 
+    /// Sets the JSON schema for structured output.
+    pub fn schema(mut self, schema: impl Into<Value>) -> Self {
+        self.json_schema = Some(schema.into());
+        self
+    }
+
     /// Sets a validation function to verify LLM responses.
     ///
     /// # Arguments
@@ -304,6 +316,7 @@ impl LLMBuilder {
                         self.embedding_dimensions,
                         self.tools,
                         self.reasoning_effort,
+                        self.json_schema,
                     ))
                 }
             }
@@ -359,6 +372,7 @@ impl LLMBuilder {
                         self.stream,
                         self.top_p,
                         self.top_k,
+                        self.json_schema,
                     );
                     Box::new(ollama)
                 }
@@ -412,6 +426,7 @@ impl LLMBuilder {
                         self.top_k,
                         self.embedding_encoding_format,
                         self.embedding_dimensions,
+                        self.json_schema,
                     );
                     Box::new(xai)
                 }
@@ -459,6 +474,7 @@ impl LLMBuilder {
                         self.stream,
                         self.top_p,
                         self.top_k,
+                        self.json_schema,
                     );
                     Box::new(google)
                 }

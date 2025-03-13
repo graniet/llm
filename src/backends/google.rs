@@ -51,6 +51,7 @@ use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::ToolCall;
 
@@ -77,6 +78,8 @@ pub struct Google {
     pub top_p: Option<f32>,
     /// Top-k sampling parameter
     pub top_k: Option<u32>,
+    /// JSON schema for structured output
+    pub json_schema: Option<Value>,
     /// HTTP client for making API requests
     client: Client,
 }
@@ -130,6 +133,13 @@ struct GoogleGenerationConfig {
     /// Top-k sampling parameter
     #[serde(skip_serializing_if = "Option::is_none", rename = "topK")]
     top_k: Option<u32>,
+    // TODO: Do these need to be renamed to camelCase?
+    /// The MIME type of the response
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_mime_type: Option<GoogleResponseMimeType>,
+    /// A schema for structured output
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_schema: Option<Value>,
 }
 
 /// Response from the chat completion API
@@ -177,6 +187,20 @@ struct GoogleResponsePart {
     text: String,
 }
 
+/// MIME type of the response
+#[derive(Deserialize, Debug, Serialize)]
+enum GoogleResponseMimeType {
+    /// Plain text response
+    #[serde(rename = "text/plain")]
+    PlainText,
+    /// JSON response
+    #[serde(rename = "application/json")]
+    Json,
+    /// ENUM as a string response in the response candidates.
+    #[serde(rename = "text/x.enum")]
+    Enum,
+}
+
 /// Request body for embedding content
 #[derive(Serialize)]
 struct GoogleEmbeddingRequest<'a> {
@@ -214,6 +238,7 @@ impl Google {
     /// * `stream` - Whether to stream responses
     /// * `top_p` - Top-p sampling parameter
     /// * `top_k` - Top-k sampling parameter
+    /// * `json_schema` - JSON schema for structured output
     ///
     /// # Returns
     ///
@@ -229,6 +254,7 @@ impl Google {
         stream: Option<bool>,
         top_p: Option<f32>,
         top_k: Option<u32>,
+        json_schema: Option<Value>,
     ) -> Self {
         let mut builder = Client::builder();
         if let Some(sec) = timeout_seconds {
@@ -244,6 +270,7 @@ impl Google {
             stream,
             top_p,
             top_k,
+            json_schema,
             client: builder.build().expect("Failed to build reqwest Client"),
         }
     }
@@ -306,14 +333,24 @@ impl ChatProvider for Google {
             && self.temperature.is_none()
             && self.top_p.is_none()
             && self.top_k.is_none()
+            && self.json_schema.is_none()
         {
             None
         } else {
+            // If json_schema is present, use it as the response schema and set response_mime_type to JSON
+            let response_mime_type: Option<GoogleResponseMimeType> = self
+                .json_schema
+                .as_ref()
+                .map(|_| GoogleResponseMimeType::Json);
+            let response_schema: Option<Value> = self.json_schema.clone();
+
             Some(GoogleGenerationConfig {
                 max_output_tokens: self.max_tokens,
                 temperature: self.temperature,
                 top_p: self.top_p,
                 top_k: self.top_k,
+                response_mime_type,
+                response_schema,
             })
         };
 
