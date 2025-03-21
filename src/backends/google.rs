@@ -41,7 +41,10 @@
 //! ```
 
 use crate::{
-    chat::{ChatMessage, ChatProvider, ChatResponse, ChatRole, MessageType, Tool},
+    chat::{
+        ChatMessage, ChatProvider, ChatResponse, ChatRole, MessageType, StructuredOutputFormat,
+        Tool,
+    },
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
     error::LLMError,
@@ -79,7 +82,7 @@ pub struct Google {
     /// Top-k sampling parameter
     pub top_k: Option<u32>,
     /// JSON schema for structured output
-    pub json_schema: Option<Value>,
+    pub json_schema: Option<StructuredOutputFormat>,
     /// HTTP client for making API requests
     client: Client,
 }
@@ -133,7 +136,6 @@ struct GoogleGenerationConfig {
     /// Top-k sampling parameter
     #[serde(skip_serializing_if = "Option::is_none", rename = "topK")]
     top_k: Option<u32>,
-    // TODO: Do these need to be renamed to camelCase?
     /// The MIME type of the response
     #[serde(skip_serializing_if = "Option::is_none")]
     response_mime_type: Option<GoogleResponseMimeType>,
@@ -254,7 +256,7 @@ impl Google {
         stream: Option<bool>,
         top_p: Option<f32>,
         top_k: Option<u32>,
-        json_schema: Option<Value>,
+        json_schema: Option<StructuredOutputFormat>,
     ) -> Self {
         let mut builder = Client::builder();
         if let Some(sec) = timeout_seconds {
@@ -337,12 +339,23 @@ impl ChatProvider for Google {
         {
             None
         } else {
-            // If json_schema is present, use it as the response schema and set response_mime_type to JSON
-            let response_mime_type: Option<GoogleResponseMimeType> = self
-                .json_schema
-                .as_ref()
-                .map(|_| GoogleResponseMimeType::Json);
-            let response_schema: Option<Value> = self.json_schema.clone();
+            // If json_schema and json_schema.schema are not None, use json_schema.schema as the response schema and set response_mime_type to JSON
+            // Google's API doesn't need the schema to have a "name" field, so we can just use the schema directly.
+            let (response_mime_type, response_schema) = if let Some(json_schema) = &self.json_schema
+            {
+                if let Some(schema) = &json_schema.schema {
+                    // If the schema has an "additionalProperties" field (as required by OpenAI), remove it as Google's API doesn't support it
+                    let mut schema = schema.clone();
+                    if let Some(obj) = schema.as_object_mut() {
+                        obj.remove("additionalProperties");
+                    }
+                    (Some(GoogleResponseMimeType::Json), Some(schema))
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            };
 
             Some(GoogleGenerationConfig {
                 max_output_tokens: self.max_tokens,

@@ -5,7 +5,7 @@
 
 #[cfg(feature = "xai")]
 use crate::{
-    chat::{ChatMessage, ChatProvider, ChatRole},
+    chat::{ChatMessage, ChatProvider, ChatRole, StructuredOutputFormat},
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
     error::LLMError,
@@ -18,7 +18,6 @@ use crate::{
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Client for interacting with X.AI's API.
 ///
@@ -48,7 +47,7 @@ pub struct XAI {
     /// Embedding dimensions
     pub embedding_dimensions: Option<u32>,
     /// JSON schema for structured output
-    pub json_schema: Option<Value>,
+    pub json_schema: Option<StructuredOutputFormat>,
     /// HTTP client for making API requests
     client: Client,
 }
@@ -162,7 +161,7 @@ struct XAIResponseFormat {
     #[serde(rename = "type")]
     response_type: XAIResponseType,
     #[serde(skip_serializing_if = "Option::is_none")]
-    json_schema: Option<Value>,
+    json_schema: Option<StructuredOutputFormat>,
 }
 
 impl XAI {
@@ -197,7 +196,7 @@ impl XAI {
         top_k: Option<u32>,
         embedding_encoding_format: Option<String>,
         embedding_dimensions: Option<u32>,
-        json_schema: Option<Value>,
+        json_schema: Option<StructuredOutputFormat>,
     ) -> Self {
         let mut builder = Client::builder();
         if let Some(sec) = timeout_seconds {
@@ -277,9 +276,6 @@ impl ChatProvider for XAI {
             top_k: self.top_k,
             response_format,
         };
-
-        let body_text = serde_json::to_string(&body).unwrap();
-        dbg!(body_text);
 
         let mut request = self
             .client

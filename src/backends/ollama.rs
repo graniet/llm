@@ -3,7 +3,7 @@
 //! This module provides integration with Ollama's local LLM server through its API.
 
 use crate::{
-    chat::{ChatMessage, ChatProvider, ChatResponse, ChatRole, Tool},
+    chat::{ChatMessage, ChatProvider, ChatResponse, ChatRole, StructuredOutputFormat, Tool},
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
     error::LLMError,
@@ -30,7 +30,7 @@ pub struct Ollama {
     pub top_p: Option<f32>,
     pub top_k: Option<u32>,
     /// JSON schema for structured output
-    pub json_schema: Option<Value>,
+    pub json_schema: Option<StructuredOutputFormat>,
     client: Client,
 }
 
@@ -158,7 +158,7 @@ impl Ollama {
         stream: Option<bool>,
         top_p: Option<f32>,
         top_k: Option<u32>,
-        json_schema: Option<Value>,
+        json_schema: Option<StructuredOutputFormat>,
     ) -> Self {
         let mut builder = Client::builder();
         if let Some(sec) = timeout_seconds {
@@ -220,12 +220,14 @@ impl ChatProvider for Ollama {
 
         // Set the format to structured output if a JSON schema is provided
         // See the [Ollama Structured Output instructions](https://ollama.com/blog/structured-outputs)
-        let format: Option<OllamaResponseFormat> =
-            self.json_schema
-                .as_ref()
-                .map(|schema| OllamaResponseFormat {
-                    format: OllamaResponseType::StructuredOutput(schema.clone()),
-                });
+        // Ollama doesn't require the "name" field in the schema, so we just use the schema itself
+        let format = if let Some(schema) = &self.json_schema {
+            schema.schema.as_ref().map(|schema| OllamaResponseFormat {
+                format: OllamaResponseType::StructuredOutput(schema.clone()),
+            })
+        } else {
+            None
+        };
 
         let req_body = OllamaChatRequest {
             model: self.model.clone(),

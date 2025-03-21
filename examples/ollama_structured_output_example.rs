@@ -1,18 +1,17 @@
 // Import required modules from the LLM library
 use llm::{
     builder::{LLMBackend, LLMBuilder},
-    chat::ChatMessage,
+    chat::{ChatMessage, StructuredOutputFormat},
 };
-use serde_json::Value;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Get Ollama server URL from environment variable or use default localhost
     let base_url = std::env::var("OLLAMA_URL").unwrap_or("http://127.0.0.1:11434".into());
 
-    // Define a simple JSON schema for structured output
     let schema = r#"
-        {
+    {
+        "name": "Student",
+        "schema": {
             "type": "object",
             "properties": {
                 "name": {
@@ -27,8 +26,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             "required": ["name", "age", "is_student"]
         }
-    "#;
-    let schema: Value = serde_json::from_str(schema)?;
+    }
+"#;
+    let schema: StructuredOutputFormat = serde_json::from_str(schema)?;
 
     // Initialize and configure the LLM client
     let llm = LLMBuilder::new()

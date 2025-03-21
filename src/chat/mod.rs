@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::fmt;
 
 use async_trait::async_trait;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{error::LLMError, ToolCall};
 
@@ -122,6 +123,54 @@ pub struct Tool {
     pub tool_type: String,
     /// The function definition if this is a function tool
     pub function: FunctionTool,
+}
+
+/// Defines rules for structured output responses based on [OpenAI's structured output requirements](https://platform.openai.com/docs/api-reference/chat/create#chat-create-response_format).
+/// Individual providers may have additional requirements or restrictions, but these should be handled by each provider's backend implementation.
+///
+/// If you plan on deserializing into this struct, make sure the source text has a `"name"` field, since that's technically the only thing required by OpenAI.
+///
+/// ## Example
+///
+/// ```
+/// use llm::chat::StructuredOutputFormat;
+/// use serde_json::json;
+///
+/// let schema = r#"
+///     {
+///         "type": "object",
+///         "properties": {
+///             "name": {
+///                 "type": "string"
+///             },
+///             "age": {
+///                 "type": "integer"
+///             },
+///             "is_student": {
+///                 "type": "boolean"
+///             }
+///         },
+///         "required": ["name", "age", "is_student"]
+///     }
+/// "#;
+/// let structured_output: StructuredOutputFormat = StructuredOutputFormat {
+///     name: "Student".to_string(),
+///     description: None,
+///     schema: Some(json!(schema)),
+///     strict: None,
+/// };
+/// assert_eq!(structured_output.name, "Student");
+/// ```
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct StructuredOutputFormat {
+    /// Name of the schema
+    pub name: String,
+    /// The description of the schema
+    pub description: Option<String>,
+    /// The JSON schema for the structured output
+    pub schema: Option<Value>,
+    /// Whether to enable strict schema adherence
+    pub strict: Option<bool>,
 }
 
 pub trait ChatResponse: std::fmt::Debug + std::fmt::Display {

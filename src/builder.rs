@@ -3,10 +3,11 @@
 //! This module provides a flexible builder pattern for creating and configuring
 //! LLM (Large Language Model) provider instances with various settings and options.
 
-use serde_json::Value;
-
 use crate::{
-    chat::{FunctionTool, ParameterProperty, ParametersSchema, ReasoningEffort, Tool},
+    chat::{
+        FunctionTool, ParameterProperty, ParametersSchema, ReasoningEffort, StructuredOutputFormat,
+        Tool,
+    },
     error::LLMError,
     LLMProvider,
 };
@@ -128,7 +129,7 @@ pub struct LLMBuilder {
     /// reasoning_budget_tokens
     reasoning_budget_tokens: Option<u32>,
     /// JSON schema for structured output
-    json_schema: Option<Value>,
+    json_schema: Option<StructuredOutputFormat>,
 }
 
 impl LLMBuilder {
@@ -237,7 +238,7 @@ impl LLMBuilder {
     }
 
     /// Sets the JSON schema for structured output.
-    pub fn schema(mut self, schema: impl Into<Value>) -> Self {
+    pub fn schema(mut self, schema: impl Into<StructuredOutputFormat>) -> Self {
         self.json_schema = Some(schema.into());
         self
     }

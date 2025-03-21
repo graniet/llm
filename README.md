@@ -21,6 +21,7 @@ With a **unified API** and **builder style** - similar to the Stripe experience 
 - **REST API**: Serve any LLM backend as a REST API with openai standard format.
 - **Vision**: Add vision to your requests to use images in your LLMs.
 - **Reasoning**: Add reasoning to your requests to use reasoning in your LLMs.
+- **Structured Output**: Request structured output from certain LLM providers based on a provided JSON schema.
 
 ## Use any LLM backend on your project
 
