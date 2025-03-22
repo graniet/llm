@@ -42,6 +42,83 @@ LLM includes a command-line tool for easily interacting with different LLM model
 - Use `echo "Hello World" | llm` to pipe
 - Use `llm --provider openai --model gpt-4 --temperature 0.7` for advanced options
 
+## Multi-step LLM Chains
+
+LLM also provides a CLI tool for creating and running multi-step prompt chains:
+
+```bash
+# Create a chain template
+llm-chain create --output=my-chain.yaml
+
+# View available providers
+llm-chain providers
+
+# Run a chain with specific provider
+llm-chain --file=my-chain.yaml --provider=openai:gpt-4o
+```
+
+Chain definitions are YAML or JSON files that specify a sequence of prompts with variable substitution and conditional execution:
+
+```yaml
+name: example-chain
+description: A chain that demonstrates multi-step processing with conditionals
+default_provider: openai:gpt-4o
+input_var: input  # Variable name for piped input
+steps:
+  - id: topic
+    template: Suggest an interesting technical topic to explore based on {{input}}. Answer with just the topic name.
+    temperature: 0.7
+    max_tokens: 50
+  - id: details
+    template: List 3 key aspects of {{topic}} that developers should know.
+    temperature: 0.5
+    max_tokens: 200
+  - id: library_check
+    template: Is there a popular library for {{topic}}? Answer with library name or 'none'.
+    temperature: 0.3
+    max_tokens: 50
+  - id: library_details
+    template: Describe the key features of the {{library_check}} library.
+    temperature: 0.3
+    max_tokens: 200
+    condition: "!library_check=none"  # Only run if library_check is not 'none'
+  - id: code_example
+    template: 'Based on {{topic}} and these aspects: {{details}}, provide a code example.'
+    temperature: 0.3
+    max_tokens: 400
+  - id: system_info
+    template: This analysis was generated on {{sys.date}} at {{sys.time}} on a {{sys.os}} system.
+    temperature: 0.1
+    max_tokens: 50
+```
+
+Variables from previous steps can be referenced using `{{variable_name}}` syntax. The chain also includes system variables (like `{{sys.date}}`, `{{sys.time}}`, `{{sys.os}}`) and supports conditional step execution. Interactive mode is also available for steps that require human review:
+
+```bash
+# Run in fully interactive mode
+llm-chain --file=my-chain.yaml --interactive
+
+# Make only specific steps interactive
+llm-chain --file=my-chain.yaml --interactive-steps=topic,code_example
+
+# Save interaction history for later review or replay
+llm-chain --file=my-chain.yaml --interactive --save-history=session.json
+```
+
+You can also pipe input to chain execution:
+
+```bash
+# Pipe input to the chain
+echo "machine learning" | llm-chain --file=my-chain.yaml
+
+# Use the final result in other commands
+echo "functional programming" | llm-chain --file=my-chain.yaml | grep "function"
+
+# Get the output in JSON format for programmatic use
+llm-chain --file=my-chain.yaml --json
+echo "design a mobile app" | llm-chain --file=my-chain.yaml --json > result.json
+```
+
 ## Serving any LLM backend as a REST API
 - Use standard messages format
 - Use step chains to chain multiple LLM backends together

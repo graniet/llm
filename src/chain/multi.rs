@@ -202,6 +202,12 @@ impl<'a> MultiPromptChain<'a> {
             memory: HashMap::new(),
         }
     }
+    
+    /// Sets initial memory values for the chain
+    pub fn with_memory(mut self, memory: HashMap<String, String>) -> Self {
+        self.memory.extend(memory);
+        self
+    }
 
     /// Adds a step
     pub fn step(mut self, step: MultiChainStep) -> Self {
