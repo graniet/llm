@@ -66,7 +66,6 @@ struct OllamaResponse {
     content: Option<String>,
     response: Option<String>,
     message: Option<OllamaChatResponseMessage>,
-    tool_calls: Option<Vec<OllamaToolCall>>,
 }
 
 impl std::fmt::Display for OllamaResponse {
@@ -80,14 +79,16 @@ impl std::fmt::Display for OllamaResponse {
             .unwrap_or(&empty);
 
         // Write tool calls if present
-        if let Some(tool_calls) = &self.tool_calls {
-            for tc in tool_calls {
-                writeln!(
-                    f,
-                    "{{\"name\": \"{}\", \"arguments\": {}}}",
-                    tc.name,
-                    serde_json::to_string_pretty(&tc.arguments).unwrap_or_default()
-                )?;
+        if let Some(message) = &self.message {
+            if let Some(tool_calls) = &message.tool_calls {
+                for tc in tool_calls {
+                    writeln!(
+                        f,
+                        "{{\"name\": \"{}\", \"arguments\": {}}}",
+                        tc.function.name,
+                        serde_json::to_string_pretty(&tc.function.arguments).unwrap_or_default()
+                    )?;
+                }
             }
         }
 
@@ -105,18 +106,24 @@ impl ChatResponse for OllamaResponse {
     }
 
     fn tool_calls(&self) -> Option<Vec<ToolCall>> {
-        self.tool_calls.as_ref().map(|tcs| {
-            tcs.iter()
-                .map(|tc| ToolCall {
-                    id: format!("call_{}", tc.name),
-                    call_type: "function".to_string(),
-                    function: FunctionCall {
-                        name: tc.name.clone(),
-                        arguments: serde_json::to_string(&tc.arguments).unwrap_or_default(),
-                    },
+        self.message
+            .as_ref()
+            .map(|msg| {
+                msg.tool_calls.as_ref().map(|tcs| {
+                    tcs.iter()
+                        .map(|tc| ToolCall {
+                            id: format!("call_{}", tc.function.name),
+                            call_type: "function".to_string(),
+                            function: FunctionCall {
+                                name: tc.function.name.clone(),
+                                arguments: serde_json::to_string(&tc.function.arguments)
+                                    .unwrap_or_default(),
+                            },
+                        })
+                        .collect()
                 })
-                .collect()
-        })
+            })
+            .flatten()
     }
 }
 
@@ -124,6 +131,7 @@ impl ChatResponse for OllamaResponse {
 #[derive(Deserialize, Debug)]
 struct OllamaChatResponseMessage {
     content: String,
+    tool_calls: Option<Vec<OllamaToolCall>>,
 }
 
 /// Request payload for Ollama's generate API endpoint.
@@ -163,6 +171,14 @@ struct OllamaResponseFormat {
 /// Ollama's tool format
 #[derive(Serialize, Debug)]
 struct OllamaTool {
+    #[serde(rename = "type")]
+    pub tool_type: String,
+
+    pub function: OllamaFunctionTool,
+}
+
+#[derive(Serialize, Debug)]
+struct OllamaFunctionTool {
     /// Name of the tool
     name: String,
     /// Description of what the tool does
@@ -177,12 +193,15 @@ impl From<&crate::chat::Tool> for OllamaTool {
             .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()));
 
         OllamaTool {
-            name: tool.function.name.clone(),
-            description: tool.function.description.clone(),
-            parameters: OllamaParameters {
-                schema_type: "object".to_string(),
-                properties: properties_value,
-                required: tool.function.parameters.required.clone(),
+            tool_type: "function".to_owned(),
+            function: OllamaFunctionTool {
+                name: tool.function.name.clone(),
+                description: tool.function.description.clone(),
+                parameters: OllamaParameters {
+                    schema_type: "object".to_string(),
+                    properties: properties_value,
+                    required: tool.function.parameters.required.clone(),
+                },
             },
         }
     }
@@ -203,6 +222,11 @@ struct OllamaParameters {
 /// Ollama's tool call response
 #[derive(Deserialize, Debug)]
 struct OllamaToolCall {
+    function: OllamaFunctionCall,
+}
+
+#[derive(Deserialize, Debug)]
+struct OllamaFunctionCall {
     /// Name of the tool that was called
     name: String,
     /// Arguments provided to the tool
@@ -395,7 +419,8 @@ impl ChatProvider for Ollama {
         }
 
         let resp = request.send().await?.error_for_status()?;
-        let json_resp: OllamaResponse = resp.json().await?;
+        let json_resp = resp.json::<OllamaResponse>().await?;
+
         Ok(Box::new(json_resp))
     }
 }
