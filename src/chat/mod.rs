@@ -90,7 +90,7 @@ pub struct ParameterProperty {
     pub description: String,
     /// When type is "array", this defines the type of the array items
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub items: Option<Box<ParameterProperty>>,
+    pub items: Option<Box<ParametersSchema>>,
     /// When type is "enum", this defines the possible values for the parameter
     #[serde(skip_serializing_if = "Option::is_none", rename = "enum")]
     pub enum_list: Option<Vec<String>>,
