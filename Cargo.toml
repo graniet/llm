@@ -27,6 +27,7 @@ full = [
     "azure_openai",
     "api",
     "elevenlabs",
+    "agent",
 ]
 openai = []
 anthropic = []
@@ -40,6 +41,7 @@ azure_openai = []
 cli = ["full", "dep:clap", "dep:rustyline", "dep:colored", "dep:spinners"]
 api = ["dep:axum", "dep:tower-http", "dep:uuid"]
 elevenlabs = []
+agent = []
 rodio = ["dep:rodio"]
 logging = ["dep:env_logger"]
 

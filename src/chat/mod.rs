@@ -273,18 +273,14 @@ pub trait ChatProvider: Sync + Send {
         None
     }
 
-    
     /// Summarizes a conversation history into a concise 2-3 sentence summary
-    /// 
+    ///
     /// # Arguments
     /// * `msgs` - The conversation messages to summarize
     ///
     /// # Returns
     /// A string containing the summary or an error if summarization fails
-    async fn summarize_history(
-        &self,
-        msgs: &[ChatMessage],
-    ) -> Result<String, LLMError> {
+    async fn summarize_history(&self, msgs: &[ChatMessage]) -> Result<String, LLMError> {
         let prompt = format!(
             "Summarize in 2-3 sentences:\n{}",
             msgs.iter()
@@ -293,7 +289,8 @@ pub trait ChatProvider: Sync + Send {
                 .join("\n"),
         );
         let req = [ChatMessage::user().content(prompt).build()];
-        self.chat(&req).await?
+        self.chat(&req)
+            .await?
             .text()
             .ok_or(LLMError::Generic("no text in summary response".into()))
     }

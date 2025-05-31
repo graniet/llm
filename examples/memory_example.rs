@@ -11,7 +11,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .backend(LLMBackend::OpenAI)
         .api_key(std::env::var("OPENAI_API_KEY").unwrap_or("sk-TESTKEY".into()))
         .model("gpt-3.5-turbo")
-        .role("assistant")
         .sliding_window_memory(5)
         .build()?;
 

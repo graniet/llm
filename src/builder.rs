@@ -178,14 +178,14 @@ pub struct LLMBuilder {
     search_parameters: Option<SearchParameters>,
     /// Memory provider for conversation history (optional)
     memory: Option<Box<dyn MemoryProvider>>,
-    /// Role name for multi-agent scenarios (optional, adds [role] prefix to memory)
-    role: Option<String>,
 }
 
 impl LLMBuilder {
     /// Creates a new empty builder instance with default values.
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            ..Default::default()
+        }
     }
 
     /// Sets the backend provider to use.
@@ -526,43 +526,18 @@ impl LLMBuilder {
     ///     .backend(LLMBackend::OpenAI)
     ///     .sliding_window_with_strategy(5, TrimStrategy::Summarize);
     /// ```
-    pub fn sliding_window_with_strategy(mut self, window_size: usize, strategy: TrimStrategy) -> Self {
-        self.memory = Some(Box::new(SlidingWindowMemory::with_strategy(window_size, strategy)));
+    pub fn sliding_window_with_strategy(
+        mut self,
+        window_size: usize,
+        strategy: TrimStrategy,
+    ) -> Self {
+        self.memory = Some(Box::new(SlidingWindowMemory::with_strategy(
+            window_size,
+            strategy,
+        )));
         self
     }
 
-    /// Sets the role name for multi-agent scenarios.
-    ///
-    /// When set, all messages stored in memory will be prefixed with [role]
-    /// to identify which agent contributed each message. This is useful for
-    /// collaborative multi-agent workflows.
-    ///
-    /// # Arguments
-    ///
-    /// * `role` - The role name (e.g., "researcher", "writer", "critic")
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use llm::builder::{LLMBuilder, LLMBackend};
-    /// use llm::memory::SlidingWindowMemory;
-    ///
-    /// let shared_memory = Box::new(SlidingWindowMemory::new(20));
-    ///
-    /// let researcher = LLMBuilder::new()
-    ///     .backend(LLMBackend::OpenAI)
-    ///     .role("researcher")
-    ///     .memory(shared_memory.clone());
-    ///
-    /// let writer = LLMBuilder::new()
-    ///     .backend(LLMBackend::Anthropic)
-    ///     .role("writer")
-    ///     .memory(shared_memory);
-    /// ```
-    pub fn role(mut self, role: impl Into<String>) -> Self {
-        self.role = Some(role.into());
-        self
-    }
 
     /// Builds and returns a configured LLM provider instance.
     ///
@@ -898,7 +873,14 @@ impl LLMBuilder {
         // Wrap with memory capabilities if memory is configured
         if let Some(memory) = self.memory {
             let memory_arc = Arc::new(RwLock::new(memory));
-            final_provider = Box::new(ChatWithMemory::new(final_provider, memory_arc, self.role));
+            let provider_arc = Arc::from(final_provider);
+            final_provider = Box::new(ChatWithMemory::new(
+                provider_arc,
+                memory_arc,
+                None,
+                Vec::new(),
+                None,
+            ));
         }
 
         Ok(final_provider)
