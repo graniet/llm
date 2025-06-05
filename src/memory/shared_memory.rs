@@ -1,20 +1,67 @@
 use async_trait::async_trait;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 
-use super::{MemoryProvider, MemoryType};
+use super::{MemoryProvider, MemoryType, MessageEvent};
 use crate::{chat::ChatMessage, error::LLMError};
 
 #[derive(Clone)]
 pub struct SharedMemory<T: MemoryProvider> {
     inner: Arc<RwLock<T>>,
+    event_sender: Option<broadcast::Sender<MessageEvent>>,
 }
 
 impl<T: MemoryProvider> SharedMemory<T> {
     pub fn new(provider: T) -> Self {
         Self {
             inner: Arc::new(RwLock::new(provider)),
+            event_sender: None,
         }
+    }
+
+    /// Create a new reactive shared memory with the given broadcast channel capacity.
+    ///
+    /// The capacity determines how many message events can be queued before older
+    /// ones get dropped for slow subscribers.
+    pub fn new_reactive_with_capacity(provider: T, capacity: usize) -> Self {
+        let (sender, _) = broadcast::channel(capacity);
+        Self {
+            inner: Arc::new(RwLock::new(provider)),
+            event_sender: Some(sender),
+        }
+    }
+
+    /// Create a new reactive shared memory using the default capacity of **1000**.
+    pub fn new_reactive(provider: T) -> Self {
+        Self::new_reactive_with_capacity(provider, 1000)
+    }
+
+    /// Subscribe to message events (only available for reactive memory)
+    pub fn subscribe(&self) -> broadcast::Receiver<MessageEvent> {
+        self.event_sender
+            .as_ref()
+            .expect("subscribe() called on non-reactive memory")
+            .subscribe()
+    }
+
+    /// Remember a message with a specific role and emit event if reactive
+    pub async fn remember_with_role(
+        &mut self,
+        message: &ChatMessage,
+        role: String,
+    ) -> Result<(), LLMError> {
+        let mut guard = self.inner.write().await;
+        guard.remember(message).await?;
+
+        if let Some(sender) = &self.event_sender {
+            let event = MessageEvent {
+                role,
+                msg: message.clone(),
+            };
+            let _ = sender.send(event);
+        }
+
+        Ok(())
     }
 }
 
@@ -72,5 +119,28 @@ impl<T: MemoryProvider> MemoryProvider for SharedMemory<T> {
                 guard.replace_with_summary(summary);
             })
         })
+    }
+
+    fn get_event_receiver(&self) -> Option<broadcast::Receiver<MessageEvent>> {
+        self.event_sender.as_ref().map(|sender| sender.subscribe())
+    }
+
+    async fn remember_with_role(
+        &mut self,
+        message: &ChatMessage,
+        role: String,
+    ) -> Result<(), LLMError> {
+        let mut guard = self.inner.write().await;
+        guard.remember(message).await?;
+
+        if let Some(sender) = &self.event_sender {
+            let event = MessageEvent {
+                role,
+                msg: message.clone(),
+            };
+            let _ = sender.send(event);
+        }
+
+        Ok(())
     }
 }

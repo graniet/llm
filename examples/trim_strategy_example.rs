@@ -14,18 +14,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
 
     println!("Testing TrimStrategy::Summarize with window size 3");
-    
+
     let messages = vec![
-        ChatMessage::user().content("Hello, my name is Alice").build(),
-        ChatMessage::user().content("I love programming in Rust").build(),
-        ChatMessage::user().content("What's the weather like?").build(),
+        ChatMessage::user()
+            .content("Hello, my name is Alice")
+            .build(),
+        ChatMessage::user()
+            .content("I love programming in Rust")
+            .build(),
+        ChatMessage::user()
+            .content("What's the weather like?")
+            .build(),
         ChatMessage::user().content("Tell me about AI").build(),
     ];
 
     for (i, message) in messages.iter().enumerate() {
         println!("\n--- Message {} ---", i + 1);
         println!("Sending: {}", message.content);
-        
+
         match llm.chat(&[message.clone()]).await {
             Ok(response) => println!("Response: {}", response),
             Err(e) => eprintln!("Error: {}", e),

@@ -7,8 +7,59 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::sync::broadcast;
 
 use crate::{chat::ChatMessage, error::LLMError};
+
+/// Event emitted when a message is added to reactive memory
+#[derive(Debug, Clone)]
+pub struct MessageEvent {
+    /// Role of the agent that sent the message
+    pub role: String,
+    /// The chat message content
+    pub msg: ChatMessage,
+}
+
+/// Conditions for triggering reactive message handlers
+#[derive(Clone)]
+pub enum MessageCondition {
+    /// Always trigger
+    Any,
+    /// Trigger if message content equals exact string
+    Eq(String),
+    /// Trigger if message content contains substring
+    Contains(String),
+    /// Trigger if message content does not contain substring
+    NotContains(String),
+    /// Trigger if sender role matches
+    RoleIs(String),
+    /// Trigger if sender role does not match
+    RoleNot(String),
+    /// Trigger if message length is greater than specified
+    LenGt(usize),
+    /// Custom condition function
+    Custom(Arc<dyn Fn(&ChatMessage) -> bool + Send + Sync>),
+    /// Empty
+    Empty,
+}
+
+impl MessageCondition {
+    /// Check if the condition is met for the given message event
+    pub fn matches(&self, event: &MessageEvent) -> bool {
+        match self {
+            MessageCondition::Any => true,
+            MessageCondition::Eq(text) => event.msg.content == *text,
+            MessageCondition::Contains(text) => event.msg.content.contains(text),
+            MessageCondition::NotContains(text) => !event.msg.content.contains(text),
+            MessageCondition::RoleIs(role) => event.role == *role,
+            MessageCondition::RoleNot(role) => event.role != *role,
+            MessageCondition::LenGt(len) => event.msg.content.len() > *len,
+            MessageCondition::Custom(func) => func(&event.msg),
+            MessageCondition::Empty => event.msg.content.is_empty(),
+        }
+    }
+}
 
 pub mod chat_wrapper;
 pub mod shared_memory;
@@ -100,4 +151,18 @@ pub trait MemoryProvider: Send + Sync {
 
     /// Replace all messages with a summary
     fn replace_with_summary(&mut self, _summary: String) {}
+
+    /// Get a receiver for reactive events if this memory supports them
+    fn get_event_receiver(&self) -> Option<broadcast::Receiver<MessageEvent>> {
+        None
+    }
+
+    /// Remember a message with a specific role for reactive memory
+    async fn remember_with_role(
+        &mut self,
+        message: &ChatMessage,
+        _role: String,
+    ) -> Result<(), LLMError> {
+        self.remember(message).await
+    }
 }

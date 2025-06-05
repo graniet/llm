@@ -146,7 +146,11 @@ impl SlidingWindowMemory {
     /// * `summary` - The summary text to replace all messages with
     pub fn replace_with_summary(&mut self, summary: String) {
         self.messages.clear();
-        self.messages.push_back(crate::chat::ChatMessage::assistant().content(summary).build());
+        self.messages.push_back(
+            crate::chat::ChatMessage::assistant()
+                .content(summary)
+                .build(),
+        );
         self.needs_summary = false;
     }
 }
@@ -200,7 +204,11 @@ impl MemoryProvider for SlidingWindowMemory {
 
     fn replace_with_summary(&mut self, summary: String) {
         self.messages.clear();
-        self.messages.push_back(crate::chat::ChatMessage::assistant().content(summary).build());
+        self.messages.push_back(
+            crate::chat::ChatMessage::assistant()
+                .content(summary)
+                .build(),
+        );
         self.needs_summary = false;
     }
 }
