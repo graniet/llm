@@ -6,11 +6,13 @@ use std::time::Duration;
 
 #[cfg(feature = "openai")]
 use crate::{
+    builder::LLMBackend,
     chat::Tool,
     chat::{ChatMessage, ChatProvider, ChatRole, MessageType, StructuredOutputFormat},
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
     error::LLMError,
+    models::{ModelListRawEntry, ModelListRequest, ModelListResponse, ModelsProvider},
     stt::SpeechToTextProvider,
     tts::TextToSpeechProvider,
     LLMProvider,
@@ -20,10 +22,12 @@ use crate::{
     FunctionCall, ToolCall,
 };
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use either::*;
 use futures::stream::Stream;
 use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Client for interacting with OpenAI's API.
 ///
@@ -863,6 +867,77 @@ impl EmbeddingProvider for OpenAI {
 
         let embeddings = json_resp.data.into_iter().map(|d| d.embedding).collect();
         Ok(embeddings)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct OpenAIModelEntry {
+    pub id: String,
+    pub created: Option<u64>,
+    #[serde(flatten)]
+    pub extra: Value,
+}
+
+impl ModelListRawEntry for OpenAIModelEntry {
+    fn get_id(&self) -> String {
+        self.id.clone()
+    }
+
+    fn get_created_at(&self) -> DateTime<Utc> {
+        self.created
+            .map(|t| chrono::DateTime::from_timestamp(t as i64, 0).unwrap_or_default())
+            .unwrap_or_default()
+    }
+
+    fn get_raw(&self) -> Value {
+        self.extra.clone()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct OpenAIModelListResponse {
+    pub data: Vec<OpenAIModelEntry>,
+}
+
+impl ModelListResponse for OpenAIModelListResponse {
+    fn get_models(&self) -> Vec<String> {
+        self.data.iter().map(|e| e.id.clone()).collect()
+    }
+
+    fn get_models_raw(&self) -> Vec<Box<dyn ModelListRawEntry>> {
+        self.data
+            .iter()
+            .map(|e| Box::new(e.clone()) as Box<dyn ModelListRawEntry>)
+            .collect()
+    }
+
+    fn get_backend(&self) -> LLMBackend {
+        LLMBackend::OpenAI
+    }
+}
+
+#[async_trait]
+impl ModelsProvider for OpenAI {
+    async fn list_models(
+        &self,
+        _request: Option<&ModelListRequest>,
+    ) -> Result<Box<dyn ModelListResponse>, LLMError> {
+        let url = self
+            .base_url
+            .join("models")
+            .map_err(|e| LLMError::HttpError(e.to_string()))?;
+
+        let resp = self
+            .client
+            .get(url)
+            .bearer_auth(&self.api_key)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let result = resp.json::<OpenAIModelListResponse>().await?;
+
+        Ok(Box::new(result))
     }
 }
 

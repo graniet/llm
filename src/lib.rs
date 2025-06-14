@@ -55,6 +55,9 @@ pub mod tts;
 /// Secret store for storing API keys and other sensitive information
 pub mod secret_store;
 
+/// Listing models support
+pub mod models;
+
 /// Memory providers for storing and retrieving conversation history
 #[macro_use]
 pub mod memory;
@@ -84,6 +87,7 @@ pub trait LLMProvider:
     + embedding::EmbeddingProvider
     + stt::SpeechToTextProvider
     + tts::TextToSpeechProvider
+    + models::ModelsProvider
 {
     fn tools(&self) -> Option<&[Tool]> {
         None

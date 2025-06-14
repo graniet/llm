@@ -3,6 +3,7 @@ use crate::completion::{CompletionProvider, CompletionRequest, CompletionRespons
 use crate::embedding::EmbeddingProvider;
 #[cfg(feature = "elevenlabs")]
 use crate::error::LLMError;
+use crate::models::ModelsProvider;
 use crate::stt::SpeechToTextProvider;
 use crate::tts::TextToSpeechProvider;
 use crate::LLMProvider;
@@ -250,6 +251,9 @@ impl ChatProvider for ElevenLabs {
         ))
     }
 }
+
+#[async_trait]
+impl ModelsProvider for ElevenLabs {}
 
 impl LLMProvider for ElevenLabs {
     /// Returns None as no tools are supported
