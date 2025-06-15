@@ -8,6 +8,7 @@ macro_rules! cond {
     (role_not    $v:literal)    => { $crate::memory::MessageCondition::RoleNot($v.into()) };
     (len_gt      $v:literal)    => { $crate::memory::MessageCondition::LenGt($v) };
     (regex       $v:literal)    => { $crate::memory::MessageCondition::Regex($v.into()) };
+    (has_audio)                 => { $crate::memory::MessageCondition::HasAudio };
 
     ($left:tt && $($rest:tt)+) => {
         $crate::memory::MessageCondition::All(vec![

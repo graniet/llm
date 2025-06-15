@@ -90,6 +90,7 @@ impl<'a> From<&'a ChatMessage> for AzureOpenAIChatMessage<'a> {
                 }
                 MessageType::ToolUse(_) => None,
                 MessageType::ToolResult(_) => None,
+                MessageType::Audio(_) => None,
             },
             tool_calls: match &chat_msg.message_type {
                 MessageType::ToolUse(calls) => {

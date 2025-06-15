@@ -21,7 +21,7 @@ pub struct ChatWithMemory {
     memory: Arc<RwLock<Box<dyn MemoryProvider>>>,
     role: Option<String>,
     role_triggers: Vec<(String, MessageCondition)>,
-
+    stt_provider: Option<Arc<dyn LLMProvider>>,
     max_cycles: Option<u32>,
     cycle_counter: std::sync::Arc<std::sync::atomic::AtomicU32>,
 }
@@ -33,12 +33,14 @@ impl ChatWithMemory {
     /// * `memory` – Conversation memory store
     /// * `role` – Optional agent role
     /// * `role_triggers` – Reactive rules
+    /// * `stt_provider` – Optional speech-to-text provider
     pub fn new(
         provider: Arc<dyn LLMProvider>,
         memory: Arc<RwLock<Box<dyn MemoryProvider>>>,
         role: Option<String>,
         role_triggers: Vec<(String, MessageCondition)>,
         max_cycles: Option<u32>,
+        stt_provider: Option<Arc<dyn LLMProvider>>,
     ) -> Self {
         use std::sync::atomic::AtomicU32;
 
@@ -47,12 +49,17 @@ impl ChatWithMemory {
             memory: memory.clone(),
             role,
             role_triggers: role_triggers.clone(),
+            stt_provider,
             max_cycles,
             cycle_counter: std::sync::Arc::new(AtomicU32::new(0)),
         };
 
         if !wrapper.role_triggers.is_empty() {
             wrapper.spawn_reactive_listener();
+        }
+
+        if wrapper.stt_provider.is_some() {
+            wrapper.spawn_stt_pipeline();
         }
 
         wrapper
@@ -123,6 +130,39 @@ impl ChatWithMemory {
         });
     }
 
+    /// Spawn a background pipeline that automatically transcribes audio messages.
+    fn spawn_stt_pipeline(&self) {
+        let memory = self.memory.clone();
+        let stt_provider = self.stt_provider.clone().expect("STT provider should exist");
+
+        tokio::spawn(async move {
+            let mut receiver = {
+                let guard = memory.read().await;
+                match guard.get_event_receiver() {
+                    Some(r) => r,
+                    None => return,
+                }
+            };
+
+            while let Ok(event) = receiver.recv().await {
+                if let Some(audio_data) = event.msg.audio_data() {
+                    match stt_provider.transcribe(audio_data.to_vec()).await {
+                        Ok(transcription) => {
+                            let mut transcribed_msg = event.msg.clone();
+                            transcribed_msg.content = transcription;
+                            
+                            let mut guard = memory.write().await;
+                            if let Err(e) = guard.remember_with_role(&transcribed_msg, event.role.clone()).await {
+                                eprintln!("STT memory save error: {}", e);
+                            }
+                        }
+                        Err(e) => eprintln!("STT transcription error: {}", e),
+                    }
+                }
+            }
+        });
+    }
+
     /// Access the wrapped provider.
     pub fn inner(&self) -> &dyn LLMProvider {
         self.provider.as_ref()
@@ -173,10 +213,37 @@ impl ChatProvider for ChatWithMemory {
             context = mem.recall("", None).await?;
         }
 
-        context.extend_from_slice(messages);
+        // Auto-transcribe audio messages if STT provider available
+        let processed_messages = if self.stt_provider.is_some() {
+            let mut processed = Vec::new();
+            for msg in messages.iter() {
+                if msg.has_audio() {
+                    if let Some(audio_data) = msg.audio_data() {
+                        let transcription = if let Some(stt) = &self.stt_provider {
+                            stt.transcribe(audio_data.to_vec()).await?
+                        } else {
+                            self.provider.transcribe(audio_data.to_vec()).await?
+                        };
+
+                        let transcribed = match msg.role {
+                            ChatRole::User => ChatMessage::user().content(transcription).build(),
+                            ChatRole::Assistant => ChatMessage::assistant().content(transcription).build(),
+                        };
+                        processed.push(transcribed);
+                    } else {
+                        processed.push(msg.clone());
+                    }
+                } else {
+                    processed.push(msg.clone());
+                }
+            }
+            processed
+        } else {
+            messages.to_vec()
+        };
+        context.extend_from_slice(&processed_messages);
         let response = self.provider.chat_with_tools(&context, tools).await?;
 
-        // record assistant reply once
         if let Some(text) = response.text() {
             let memory = self.memory.clone();
             let tag = self.role.clone();

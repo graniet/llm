@@ -178,7 +178,9 @@ impl MemoryProvider for SlidingWindowMemory {
         limit: Option<usize>,
     ) -> Result<Vec<ChatMessage>, LLMError> {
         let limit = limit.unwrap_or(self.messages.len());
-        Ok(self.recent_messages(limit))
+        let mut messages = self.recent_messages(limit);
+        messages.retain(|m| !m.has_audio());
+        Ok(messages)
     }
 
     async fn clear(&mut self) -> Result<(), LLMError> {
