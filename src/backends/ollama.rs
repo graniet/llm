@@ -7,6 +7,7 @@ use crate::{
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
     error::LLMError,
+    models::ModelsProvider,
     stt::SpeechToTextProvider,
     tts::TextToSpeechProvider,
     FunctionCall, ToolCall,
@@ -537,6 +538,9 @@ impl SpeechToTextProvider for Ollama {
         ))
     }
 }
+
+#[async_trait]
+impl ModelsProvider for Ollama {}
 
 impl crate::LLMProvider for Ollama {
     fn tools(&self) -> Option<&[Tool]> {

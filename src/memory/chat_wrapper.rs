@@ -10,6 +10,7 @@ use crate::{
     embedding::EmbeddingProvider,
     error::LLMError,
     memory::{MemoryProvider, MessageCondition},
+    models::ModelsProvider,
     stt::SpeechToTextProvider,
     tts::TextToSpeechProvider,
     LLMProvider,
@@ -301,6 +302,9 @@ impl TextToSpeechProvider for ChatWithMemory {
         self.provider.speech(text).await
     }
 }
+
+#[async_trait]
+impl ModelsProvider for ChatWithMemory {}
 
 impl LLMProvider for ChatWithMemory {
     fn tools(&self) -> Option<&[Tool]> {

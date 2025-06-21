@@ -6,11 +6,13 @@ use std::time::Duration;
 
 #[cfg(feature = "openai")]
 use crate::{
+    builder::LLMBackend,
     chat::Tool,
     chat::{ChatMessage, ChatProvider, ChatRole, MessageType, StructuredOutputFormat},
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
     error::LLMError,
+    models::{ModelListRawEntry, ModelListRequest, ModelListResponse, ModelsProvider},
     stt::SpeechToTextProvider,
     tts::TextToSpeechProvider,
     LLMProvider,
@@ -20,10 +22,12 @@ use crate::{
     FunctionCall, ToolCall,
 };
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use either::*;
 use futures::stream::Stream;
 use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Client for interacting with OpenAI's API.
 ///
@@ -484,26 +488,26 @@ impl ChatProvider for OpenAI {
                 .web_search_user_location_type
                 .as_ref()
                 .filter(|t| matches!(t.as_str(), "exact" | "approximate"));
-        
+
             let country = self.web_search_user_location_approximate_country.as_ref();
-            let city    = self.web_search_user_location_approximate_city.as_ref();
-            let region  = self.web_search_user_location_approximate_region.as_ref();
-        
+            let city = self.web_search_user_location_approximate_city.as_ref();
+            let region = self.web_search_user_location_approximate_region.as_ref();
+
             let approximate = if [country, city, region].iter().any(|v| v.is_some()) {
                 Some(ApproximateLocation {
                     country: country.cloned().unwrap_or_default(),
-                    city:    city.cloned().unwrap_or_default(),
-                    region:  region.cloned().unwrap_or_default(),
+                    city: city.cloned().unwrap_or_default(),
+                    region: region.cloned().unwrap_or_default(),
                 })
             } else {
                 None
             };
-        
+
             let user_location = loc_type_opt.map(|loc_type| UserLocation {
                 location_type: loc_type.clone(),
                 approximate,
             });
-        
+
             Some(OpenAIWebSearchOptions {
                 search_context_size: self.web_search_context_size.clone(),
                 user_location,
@@ -511,7 +515,6 @@ impl ChatProvider for OpenAI {
         } else {
             None
         };
-        
 
         let body = OpenAIChatRequest {
             model: &self.model,
@@ -588,7 +591,8 @@ impl ChatProvider for OpenAI {
     async fn chat_stream(
         &self,
         messages: &[ChatMessage],
-    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send>>, LLMError> {
+    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send>>, LLMError>
+    {
         if self.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing OpenAI API key".to_string()));
         }
@@ -867,6 +871,77 @@ impl EmbeddingProvider for OpenAI {
     }
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct OpenAIModelEntry {
+    pub id: String,
+    pub created: Option<u64>,
+    #[serde(flatten)]
+    pub extra: Value,
+}
+
+impl ModelListRawEntry for OpenAIModelEntry {
+    fn get_id(&self) -> String {
+        self.id.clone()
+    }
+
+    fn get_created_at(&self) -> DateTime<Utc> {
+        self.created
+            .map(|t| chrono::DateTime::from_timestamp(t as i64, 0).unwrap_or_default())
+            .unwrap_or_default()
+    }
+
+    fn get_raw(&self) -> Value {
+        self.extra.clone()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct OpenAIModelListResponse {
+    pub data: Vec<OpenAIModelEntry>,
+}
+
+impl ModelListResponse for OpenAIModelListResponse {
+    fn get_models(&self) -> Vec<String> {
+        self.data.iter().map(|e| e.id.clone()).collect()
+    }
+
+    fn get_models_raw(&self) -> Vec<Box<dyn ModelListRawEntry>> {
+        self.data
+            .iter()
+            .map(|e| Box::new(e.clone()) as Box<dyn ModelListRawEntry>)
+            .collect()
+    }
+
+    fn get_backend(&self) -> LLMBackend {
+        LLMBackend::OpenAI
+    }
+}
+
+#[async_trait]
+impl ModelsProvider for OpenAI {
+    async fn list_models(
+        &self,
+        _request: Option<&ModelListRequest>,
+    ) -> Result<Box<dyn ModelListResponse>, LLMError> {
+        let url = self
+            .base_url
+            .join("models")
+            .map_err(|e| LLMError::HttpError(e.to_string()))?;
+
+        let resp = self
+            .client
+            .get(url)
+            .bearer_auth(&self.api_key)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let result = resp.json::<OpenAIModelListResponse>().await?;
+
+        Ok(Box::new(result))
+    }
+}
+
 impl LLMProvider for OpenAI {
     fn tools(&self) -> Option<&[Tool]> {
         self.tools.as_deref()
@@ -938,29 +1013,36 @@ impl TextToSpeechProvider for OpenAI {
 /// * `Ok(None)` - If chunk should be skipped (e.g., ping, done signal)
 /// * `Err(LLMError)` - If parsing fails
 fn parse_sse_chunk(chunk: &str) -> Result<Option<String>, LLMError> {
+    let mut collected_content = String::new();
+
     for line in chunk.lines() {
         let line = line.trim();
-        
-        if line.starts_with("data: ") {
-            let data = &line[6..];
-            
+
+        if let Some(data) = line.strip_prefix("data: ") {
             if data == "[DONE]" {
-                return Ok(None);
+                if collected_content.is_empty() {
+                    return Ok(None);
+                } else {
+                    return Ok(Some(collected_content));
+                }
             }
-            
+
             match serde_json::from_str::<OpenAIChatStreamResponse>(data) {
                 Ok(response) => {
                     if let Some(choice) = response.choices.first() {
                         if let Some(content) = &choice.delta.content {
-                            return Ok(Some(content.clone()));
+                            collected_content.push_str(content);
                         }
                     }
-                    return Ok(None);
                 }
                 Err(_) => continue,
             }
         }
     }
-    
-    Ok(None)
+
+    if collected_content.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(collected_content))
+    }
 }

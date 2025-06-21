@@ -108,6 +108,8 @@ More details in the [`api_example`](examples/api_example.rs)
 | [`trim_strategy_example`](examples/trim_strategy_example.rs) | Example demonstrating memory trimming strategies with automatic summarization |
 | [`agent_builder_example`](examples/agent_builder_example.rs) | Example of reactive agents cooperating via shared memory, demonstrating creation of LLM agents with roles, conditions|
 | [`openai_web_search_example`](examples/openai_web_search_example.rs) | Example demonstrating OpenAI web search functionality with location-based search context |
+| [`model_listing_example`](examples/model_listing_example.rs) | Example demonstrating how to list available models from an LLM backend |
+
 
 
 

@@ -9,6 +9,7 @@ use crate::{
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
     error::LLMError,
+    models::ModelsProvider,
     stt::SpeechToTextProvider,
     tts::TextToSpeechProvider,
     LLMProvider,
@@ -224,6 +225,9 @@ impl SpeechToTextProvider for DeepSeek {
         ))
     }
 }
+
+#[async_trait]
+impl ModelsProvider for DeepSeek {}
 
 impl LLMProvider for DeepSeek {}
 

@@ -49,6 +49,7 @@ use crate::{
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
     error::LLMError,
+    models::ModelsProvider,
     stt::SpeechToTextProvider,
     tts::TextToSpeechProvider,
     FunctionCall, LLMProvider, ToolCall,
@@ -1052,3 +1053,6 @@ fn parse_google_sse_chunk(chunk: &str) -> Result<Option<String>, LLMError> {
 
 #[async_trait]
 impl TextToSpeechProvider for Google {}
+
+#[async_trait]
+impl ModelsProvider for Google {}
