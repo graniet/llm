@@ -326,46 +326,27 @@ fn parse_ollama_sse_chunk(chunk: &str) -> Result<Option<String>, LLMError> {
             continue;
         }
 
-        // Ollama sends JSON objects directly, not prefixed with "data: "
-        match serde_json::from_str::<OllamaResponse>(line) {
-            Ok(response) => {
-                // Check if this is the final message (done: true)
-                if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
-                    if let Some(done) = value.get("done").and_then(|v| v.as_bool()) {
-                        if done {
-                            // This is the final chunk, return any collected content
-                            if collected_content.is_empty() {
-                                return Ok(None);
-                            } else {
-                                return Ok(Some(collected_content));
-                            }
-                        }
-                    }
-                }
+        // Parse as generic JSON first to check for completion and extract data efficiently
+        let json_value: serde_json::Value = match serde_json::from_str(line) {
+            Ok(value) => value,
+            Err(_) => continue, // Skip unparseable lines
+        };
 
-                // Extract content from the response
-                if let Some(content) = response.text() {
-                    if !content.is_empty() {
-                        collected_content.push_str(&content);
-                    }
+        // Check if this is the final message (done: true)
+        if let Some(true) = json_value.get("done").and_then(|v| v.as_bool()) {
+            return if collected_content.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(collected_content))
+            };
+        }
+
+        // Extract content from the message field
+        if let Some(message) = json_value.get("message") {
+            if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
+                if !content.is_empty() {
+                    collected_content.push_str(content);
                 }
-            }
-            Err(_) => {
-                // If we can't parse as OllamaResponse, try to parse as a generic JSON
-                // to check for the "done" field
-                if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
-                    if let Some(done) = value.get("done").and_then(|v| v.as_bool()) {
-                        if done {
-                            if collected_content.is_empty() {
-                                return Ok(None);
-                            } else {
-                                return Ok(Some(collected_content));
-                            }
-                        }
-                    }
-                }
-                // Skip lines that can't be parsed
-                continue;
             }
         }
     }
@@ -577,19 +558,16 @@ impl ChatProvider for Ollama {
             );
         }
 
-        // Ollama doesn't require the "name" field in the schema, so we just use the schema itself
-        let format = if let Some(schema) = &self.json_schema {
+        let format = self.json_schema.as_ref().and_then(|schema| {
             schema.schema.as_ref().map(|schema| OllamaResponseFormat {
                 format: OllamaResponseType::StructuredOutput(schema.clone()),
             })
-        } else {
-            None
-        };
+        });
 
         let req_body = OllamaChatRequest {
             model: self.model.clone(),
             messages: chat_messages,
-            stream: true, // Enable streaming
+            stream: true,
             options: Some(OllamaOptions {
                 top_p: self.top_p,
                 top_k: self.top_k,
@@ -605,7 +583,6 @@ impl ChatProvider for Ollama {
         }
 
         let url = format!("{}/api/chat", self.base_url);
-
         let mut request = self.client.post(&url).json(&req_body);
 
         if let Some(timeout) = self.timeout_seconds {
@@ -613,9 +590,7 @@ impl ChatProvider for Ollama {
         }
 
         let resp = request.send().await?;
-
         log::debug!("Ollama streaming HTTP status: {}", resp.status());
-
         let resp = resp.error_for_status()?;
 
         Ok(crate::chat::create_sse_stream(resp, parse_ollama_sse_chunk))
