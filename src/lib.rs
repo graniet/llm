@@ -31,6 +31,9 @@ pub mod chain;
 /// Chat-based interactions with language models (e.g. ChatGPT style)
 pub mod chat;
 
+/// Health checks for LLM providers
+pub mod health;
+
 /// Text completion capabilities (e.g. GPT-3 style completion)
 pub mod completion;
 
@@ -67,7 +70,6 @@ pub mod agent;
 
 #[cfg(feature = "api")]
 pub mod api;
-
 
 #[inline]
 /// Initialize logging using env_logger if the "logging" feature is enabled.
