@@ -90,6 +90,7 @@ pub trait LLMProvider:
     + stt::SpeechToTextProvider
     + tts::TextToSpeechProvider
     + models::ModelsProvider
+    + health::HealthProvider
 {
     fn tools(&self) -> Option<&[Tool]> {
         None
