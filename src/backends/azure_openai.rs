@@ -9,6 +9,7 @@ use crate::{
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
     error::LLMError,
+    health::HealthProvider,
     models::ModelsProvider,
     stt::SpeechToTextProvider,
     tts::TextToSpeechProvider,
@@ -607,6 +608,9 @@ impl TextToSpeechProvider for AzureOpenAI {
         ))
     }
 }
+
+#[async_trait]
+impl HealthProvider for AzureOpenAI {}
 
 #[async_trait]
 impl ModelsProvider for AzureOpenAI {}

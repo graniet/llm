@@ -9,6 +9,7 @@ use crate::{
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
     error::LLMError,
+    health::HealthProvider,
     models::ModelsProvider,
     stt::SpeechToTextProvider,
     tts::TextToSpeechProvider,
@@ -348,14 +349,17 @@ impl ChatProvider for XAI {
         let search_parameters = XaiSearchParameters {
             mode: self.xai_search_mode.clone(),
             sources: Some(vec![XaiSearchSource {
-                source_type: self.xai_search_source_type.clone().unwrap_or("web".to_string()),
+                source_type: self
+                    .xai_search_source_type
+                    .clone()
+                    .unwrap_or("web".to_string()),
                 excluded_websites: self.xai_search_excluded_websites.clone(),
             }]),
             max_search_results: self.xai_search_max_results.clone(),
             from_date: self.xai_search_from_date.clone(),
             to_date: self.xai_search_to_date.clone(),
         };
-        
+
         let body = XAIChatRequest {
             model: &self.model,
             messages: xai_msgs,
@@ -425,7 +429,8 @@ impl ChatProvider for XAI {
     async fn chat_stream(
         &self,
         messages: &[ChatMessage],
-    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send>>, LLMError> {
+    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send>>, LLMError>
+    {
         if self.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing X.AI API key".to_string()));
         }
@@ -484,7 +489,10 @@ impl ChatProvider for XAI {
             });
         }
 
-        Ok(crate::chat::create_sse_stream(response, parse_xai_sse_chunk))
+        Ok(crate::chat::create_sse_stream(
+            response,
+            parse_xai_sse_chunk,
+        ))
     }
 }
 
@@ -558,6 +566,9 @@ impl TextToSpeechProvider for XAI {}
 #[async_trait]
 impl ModelsProvider for XAI {}
 
+#[async_trait]
+impl HealthProvider for XAI {}
+
 impl LLMProvider for XAI {}
 
 /// Parses a Server-Sent Events (SSE) chunk from X.AI's streaming API.
@@ -574,14 +585,14 @@ impl LLMProvider for XAI {}
 fn parse_xai_sse_chunk(chunk: &str) -> Result<Option<String>, LLMError> {
     for line in chunk.lines() {
         let line = line.trim();
-        
+
         if line.starts_with("data: ") {
             let data = &line[6..];
-            
+
             if data == "[DONE]" {
                 return Ok(None);
             }
-            
+
             match serde_json::from_str::<XAIStreamResponse>(data) {
                 Ok(response) => {
                     if let Some(choice) = response.choices.first() {
@@ -595,6 +606,6 @@ fn parse_xai_sse_chunk(chunk: &str) -> Result<Option<String>, LLMError> {
             }
         }
     }
-    
+
     Ok(None)
 }

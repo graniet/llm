@@ -12,6 +12,7 @@ use crate::{
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
     error::LLMError,
+    health::HealthProvider,
     models::{ModelListRawEntry, ModelListRequest, ModelListResponse, ModelsProvider},
     stt::SpeechToTextProvider,
     tts::TextToSpeechProvider,
@@ -940,6 +941,9 @@ impl ModelsProvider for OpenAI {
         Ok(Box::new(result))
     }
 }
+
+#[async_trait]
+impl HealthProvider for OpenAI {}
 
 impl LLMProvider for OpenAI {
     fn tools(&self) -> Option<&[Tool]> {

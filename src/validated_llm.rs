@@ -29,6 +29,7 @@ use crate::chat::{ChatMessage, ChatProvider, ChatResponse, ChatRole, MessageType
 use crate::completion::{CompletionProvider, CompletionRequest, CompletionResponse};
 use crate::embedding::EmbeddingProvider;
 use crate::error::LLMError;
+use crate::health::HealthProvider;
 use crate::models::ModelsProvider;
 use crate::stt::SpeechToTextProvider;
 use crate::tts::TextToSpeechProvider;
@@ -73,6 +74,9 @@ impl ValidatedLLM {
         }
     }
 }
+
+#[async_trait]
+impl HealthProvider for ValidatedLLM {}
 
 impl LLMProvider for ValidatedLLM {}
 
