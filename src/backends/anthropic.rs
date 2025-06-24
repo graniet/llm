@@ -6,13 +6,11 @@ use std::collections::HashMap;
 
 use crate::{
     builder::LLMBackend,
-    chat::{
-        ChatMessage, ChatProvider, ChatResponse, ChatRole, MessageType, Tool,
-        ToolChoice,
-    },
+    chat::{ChatMessage, ChatProvider, ChatResponse, ChatRole, MessageType, Tool, ToolChoice},
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
     error::LLMError,
+    health::HealthProvider,
     models::{ModelListRawEntry, ModelListRequest, ModelListResponse, ModelsProvider},
     stt::SpeechToTextProvider,
     tts::TextToSpeechProvider,
@@ -520,7 +518,8 @@ impl ChatProvider for Anthropic {
     async fn chat_stream(
         &self,
         messages: &[ChatMessage],
-    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send>>, LLMError> {
+    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send>>, LLMError>
+    {
         if self.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Anthropic API key".to_string()));
         }
@@ -614,7 +613,10 @@ impl ChatProvider for Anthropic {
             });
         }
 
-        Ok(crate::chat::create_sse_stream(response, parse_anthropic_sse_chunk))
+        Ok(crate::chat::create_sse_stream(
+            response,
+            parse_anthropic_sse_chunk,
+        ))
     }
 }
 
@@ -676,7 +678,7 @@ pub struct AnthropicModelEntry {
     created_at: DateTime<Utc>,
     id: String,
     #[serde(flatten)]
-    extra: Value
+    extra: Value,
 }
 
 impl ModelListRawEntry for AnthropicModelEntry {
@@ -692,6 +694,9 @@ impl ModelListRawEntry for AnthropicModelEntry {
         self.extra.clone()
     }
 }
+
+#[async_trait]
+impl HealthProvider for Anthropic {}
 
 #[async_trait]
 impl ModelsProvider for Anthropic {
@@ -734,10 +739,10 @@ impl crate::LLMProvider for Anthropic {
 fn parse_anthropic_sse_chunk(chunk: &str) -> Result<Option<String>, LLMError> {
     for line in chunk.lines() {
         let line = line.trim();
-        
+
         if line.starts_with("data: ") {
             let data = &line[6..];
-            
+
             match serde_json::from_str::<AnthropicStreamResponse>(data) {
                 Ok(response) => {
                     if response.response_type == "content_block_delta" {
@@ -753,6 +758,6 @@ fn parse_anthropic_sse_chunk(chunk: &str) -> Result<Option<String>, LLMError> {
             }
         }
     }
-    
+
     Ok(None)
 }

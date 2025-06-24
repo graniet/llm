@@ -9,6 +9,7 @@ use crate::{
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
     error::LLMError,
+    health::HealthProvider,
     memory::{MemoryProvider, MessageCondition},
     models::ModelsProvider,
     stt::SpeechToTextProvider,
@@ -112,7 +113,9 @@ impl ChatWithMemory {
                 };
 
                 if let (Some(txt), Some(role)) = (response_text, &my_role) {
-                    let msg = ChatMessage::assistant().content(format!("[{role}] {txt}")).build();
+                    let msg = ChatMessage::assistant()
+                        .content(format!("[{role}] {txt}"))
+                        .build();
                     let mut guard = memory.write().await;
                     if let Err(e) = guard.remember_with_role(&msg, role.clone()).await {
                         eprintln!("Memory save error: {e}");
@@ -144,7 +147,10 @@ impl ChatProvider for ChatWithMemory {
         tools: Option<&[Tool]>,
     ) -> Result<Box<dyn ChatResponse>, LLMError> {
         // Reset cycle counter when receiving a user-originated message
-        if messages.iter().any(|m| matches!(m.role, crate::chat::ChatRole::User)) {
+        if messages
+            .iter()
+            .any(|m| matches!(m.role, crate::chat::ChatRole::User))
+        {
             self.cycle_counter
                 .store(0, std::sync::atomic::Ordering::Relaxed);
         }
@@ -238,6 +244,9 @@ impl TextToSpeechProvider for ChatWithMemory {
 
 #[async_trait]
 impl ModelsProvider for ChatWithMemory {}
+
+#[async_trait]
+impl HealthProvider for ChatWithMemory {}
 
 impl LLMProvider for ChatWithMemory {
     fn tools(&self) -> Option<&[Tool]> {

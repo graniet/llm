@@ -1,9 +1,6 @@
+use crate::{builder::LLMBackend, error::LLMError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use crate::{
-    builder::LLMBackend,
-    error::LLMError,
-};
 use std::fmt::Debug;
 
 pub trait ModelListResponse {
