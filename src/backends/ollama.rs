@@ -7,6 +7,7 @@ use crate::{
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
     error::LLMError,
+    health::HealthProvider,
     models::ModelsProvider,
     stt::SpeechToTextProvider,
     tts::TextToSpeechProvider,
@@ -355,6 +356,16 @@ fn parse_ollama_sse_chunk(chunk: &str) -> Result<Option<String>, LLMError> {
         Ok(None)
     } else {
         Ok(Some(collected_content))
+    }
+}
+
+#[async_trait]
+impl HealthProvider for Ollama {
+    async fn health_check(&self) -> Result<(), LLMError> {
+        let url = format!("{}/api/version", self.base_url);
+        let resp = self.client.get(&url).send().await?;
+        resp.error_for_status()?;
+        Ok(())
     }
 }
 
