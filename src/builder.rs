@@ -935,6 +935,7 @@ impl LLMBuilder {
                 None,
                 Vec::new(),
                 None,
+                None,
             ));
         }
 
