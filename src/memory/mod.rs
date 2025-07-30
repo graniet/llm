@@ -54,6 +54,8 @@ pub enum MessageCondition {
     AnyOf(Vec<MessageCondition>),
     /// Trigger if message content matches regex
     Regex(String),
+    /// Trigger if message contains audio data
+    HasAudio,
 }
 
 impl MessageCondition {
@@ -72,6 +74,7 @@ impl MessageCondition {
             MessageCondition::All(inner) => inner.iter().all(|c| c.matches(event)),
             MessageCondition::AnyOf(inner) => inner.iter().any(|c| c.matches(event)),
             MessageCondition::Regex(regex) => Regex::new(regex).map(|re| re.is_match(&event.msg.content)).unwrap_or(false),
+            MessageCondition::HasAudio => event.msg.has_audio(),
         }
     }
 }
