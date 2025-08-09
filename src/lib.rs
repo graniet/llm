@@ -43,6 +43,9 @@ pub mod error;
 /// Validation wrapper for LLM providers with retry capabilities
 pub mod validated_llm;
 
+/// Resilience wrapper (retry/backoff) for LLM providers
+pub mod resilient_llm;
+
 /// Evaluator for LLM providers
 pub mod evaluator;
 

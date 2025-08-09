@@ -6,7 +6,7 @@ use crate::{
 };
 use std::fmt::Debug;
 
-pub trait ModelListResponse {
+pub trait ModelListResponse: Send + Sync {
     fn get_models(&self) -> Vec<String>;
     fn get_models_raw(&self) -> Vec<Box<dyn ModelListRawEntry>>;
     fn get_backend(&self) -> LLMBackend;

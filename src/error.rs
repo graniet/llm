@@ -22,6 +22,11 @@ pub enum LLMError {
     JsonError(String),
     /// Tool configuration error
     ToolConfigError(String),
+    /// Retry attempts exceeded
+    RetryExceeded {
+        attempts: usize,
+        last_error: String,
+    },
 }
 
 impl fmt::Display for LLMError {
@@ -44,6 +49,7 @@ impl fmt::Display for LLMError {
             }
             LLMError::JsonError(e) => write!(f, "JSON Parse Error: {}", e),
             LLMError::ToolConfigError(e) => write!(f, "Tool Configuration Error: {}", e),
+            LLMError::RetryExceeded { attempts, last_error } => write!(f, "Retry attempts exceeded after {} tries: {}", attempts, last_error),
         }
     }
 }

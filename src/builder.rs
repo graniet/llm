@@ -181,6 +181,15 @@ pub struct LLMBuilder {
     openai_web_search_user_location_approximate_city: Option<String>,
     /// OpenAI web search user location approximate region
     openai_web_search_user_location_approximate_region: Option<String>,
+    /// Resilience: enable retry/backoff wrapper
+    resilient_enable: Option<bool>,
+    /// Resilience: max attempts
+    resilient_attempts: Option<usize>,
+    /// Resilience: base and max delay in ms
+    resilient_base_delay_ms: Option<u64>,
+    resilient_max_delay_ms: Option<u64>,
+    /// Resilience: jitter toggle
+    resilient_jitter: Option<bool>,
 }
 
 impl LLMBuilder {
@@ -412,6 +421,31 @@ impl LLMBuilder {
         region: impl Into<String>,
     ) -> Self {
         self.openai_web_search_user_location_approximate_region = Some(region.into());
+        self
+    }
+
+    /// Enables or disables the resilience wrapper (retry/backoff).
+    pub fn resilient(mut self, enable: bool) -> Self {
+        self.resilient_enable = Some(enable);
+        self
+    }
+
+    /// Sets the maximum number of attempts for resilience (including the first try).
+    pub fn resilient_attempts(mut self, attempts: usize) -> Self {
+        self.resilient_attempts = Some(attempts);
+        self
+    }
+
+    /// Sets the backoff bounds in milliseconds for resilience.
+    pub fn resilient_backoff(mut self, base_delay_ms: u64, max_delay_ms: u64) -> Self {
+        self.resilient_base_delay_ms = Some(base_delay_ms);
+        self.resilient_max_delay_ms = Some(max_delay_ms);
+        self
+    }
+
+    /// Enables or disables jitter for backoff delays.
+    pub fn resilient_jitter(mut self, jitter: bool) -> Self {
+        self.resilient_jitter = Some(jitter);
         self
     }
 
@@ -969,6 +1003,16 @@ impl LLMBuilder {
         } else {
             provider
         };
+
+        // Wrap with resilience retry/backoff if enabled
+        if self.resilient_enable.unwrap_or(false) {
+            let mut cfg = crate::resilient_llm::ResilienceConfig::defaults();
+            if let Some(attempts) = self.resilient_attempts { cfg.max_attempts = attempts; }
+            if let Some(base) = self.resilient_base_delay_ms { cfg.base_delay_ms = base; }
+            if let Some(maxd) = self.resilient_max_delay_ms { cfg.max_delay_ms = maxd; }
+            if let Some(j) = self.resilient_jitter { cfg.jitter = j; }
+            final_provider = Box::new(crate::resilient_llm::ResilientLLM::new(final_provider, cfg));
+        }
 
         // Wrap with memory capabilities if memory is configured
         if let Some(memory) = self.memory {

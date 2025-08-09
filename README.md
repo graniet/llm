@@ -17,6 +17,7 @@ With a **unified API** and **builder style** - similar to the Stripe experience 
 - **Extensible**: Easily add new backends.
 - **Rust-friendly**: Designed with clear traits, unified error handling, and conditional compilation via *features*.
 - **Validation**: Add validation to your requests to ensure the output is what you expect.
+- **Resilience (retry/backoff)**: Enable resilient calls with exponential backoff and jitter.
 - **Evaluation**: Add evaluation to your requests to score the output of LLMs.
 - **Parallel Evaluation**: Evaluate multiple LLM providers in parallel and select the best response based on scoring functions.
 - **Function calling**: Add function calling to your requests to use tools in your LLMs.
@@ -73,6 +74,7 @@ More details in the [`api_example`](examples/api_example.rs)
 | [`multi_backend_example`](examples/multi_backend_example.rs) | Illustrates chaining multiple LLM backends (OpenAI, Anthropic, DeepSeek) together in a single workflow |
 | [`ollama_example`](examples/ollama_example.rs) | Example of using local LLMs through Ollama integration |
 | [`openai_example`](examples/openai_example.rs) | Basic OpenAI chat completion example with GPT models |
+| [`resilient_example`](examples/resilient_example.rs) | Simple retry/backoff wrapper usage |
 | [`openai_streaming_example`](examples/openai_streaming_example.rs) | OpenAI streaming chat example demonstrating real-time token generation |
 | [`phind_example`](examples/phind_example.rs) | Basic Phind chat completion example with Phind-70B model |
 | [`validator_example`](examples/validator_example.rs) | Basic validator example with Anthropic's Claude model |

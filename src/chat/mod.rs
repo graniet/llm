@@ -301,7 +301,7 @@ impl Serialize for ToolChoice {
     }
 }
 
-pub trait ChatResponse: std::fmt::Debug + std::fmt::Display {
+pub trait ChatResponse: std::fmt::Debug + std::fmt::Display + Send + Sync {
     fn text(&self) -> Option<String>;
     fn tool_calls(&self) -> Option<Vec<ToolCall>>;
     fn thinking(&self) -> Option<String> {
