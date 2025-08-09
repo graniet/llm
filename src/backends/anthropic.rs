@@ -435,6 +435,7 @@ impl ChatProvider for Anthropic {
                             tool_output: Some(r.function.arguments.clone()),
                         })
                         .collect(),
+                    MessageType::Audio(_) => vec![],
                 },
             })
             .collect();

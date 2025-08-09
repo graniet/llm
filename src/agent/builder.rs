@@ -18,7 +18,7 @@ use tokio::sync::RwLock;
 /// - Maintain conversation context
 /// - Handle speech-to-text and text-to-speech capabilities
 pub struct AgentBuilder {
-    llm_builder: LLMBuilder,
+    llm_builder: Option<LLMBuilder>,
     role: Option<String>,
     role_triggers: Vec<(String, MessageCondition)>,
     max_cycles: Option<u32>,
@@ -33,7 +33,7 @@ impl AgentBuilder {
     /// Creates a new AgentBuilder instance.
     pub fn new() -> Self {
         Self {
-            llm_builder: LLMBuilder::new(),
+            llm_builder: None,
             role: None,
             role_triggers: Vec::new(),
             max_cycles: None,
@@ -84,7 +84,7 @@ impl AgentBuilder {
 
     /// Sets the underlying LLM configuration.
     pub fn llm(mut self, llm_builder: LLMBuilder) -> Self {
-        self.llm_builder = llm_builder;
+        self.llm_builder = Some(llm_builder);
         self
     }
 
@@ -112,8 +112,23 @@ impl AgentBuilder {
     ///
     /// Returns an error if the underlying LLM configuration is invalid.
     pub fn build(self) -> Result<Box<dyn LLMProvider>, LLMError> {
-        // Build the base LLM provider
-        let base_provider = self.llm_builder.build()?;
+        let (base_provider, stt_provider) = match (self.llm_builder, self.stt_builder) {
+            (Some(llm), Some(stt)) => {
+                // Both LLM and STT - use LLM as base, STT as separate provider
+                (llm.build()?, Some(Arc::from(stt.build()?)))
+            },
+            (Some(llm), None) => {
+                // LLM only
+                (llm.build()?, None)
+            },
+            (None, Some(stt)) => {
+                // STT only
+                (stt.build()?, None)
+            },
+            (None, None) => {
+                return Err(LLMError::InvalidRequest("No provider configured".into()));
+            }
+        };
 
         // If memory is configured, wrap with ChatWithMemory including agent capabilities
         if let Some(memory) = self.memory {
@@ -125,6 +140,7 @@ impl AgentBuilder {
                 self.role,
                 self.role_triggers,
                 self.max_cycles,
+                stt_provider,
             );
             Ok(Box::new(agent_provider))
         } else {

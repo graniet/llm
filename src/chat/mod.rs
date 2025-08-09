@@ -122,6 +122,8 @@ pub enum MessageType {
     ToolUse(Vec<ToolCall>),
     /// Tool result
     ToolResult(Vec<ToolCall>),
+    /// Audio data for speech-to-text processing
+    Audio(Vec<u8>),
 }
 
 /// The type of reasoning effort for a message in a chat conversation.
@@ -435,6 +437,19 @@ impl ChatMessage {
     pub fn assistant() -> ChatMessageBuilder {
         ChatMessageBuilder::new(ChatRole::Assistant)
     }
+
+    /// Check if this message contains audio data
+    pub fn has_audio(&self) -> bool {
+        matches!(self.message_type, MessageType::Audio(_))
+    }
+
+    /// Get audio data if this is an audio message
+    pub fn audio_data(&self) -> Option<&[u8]> {
+        match &self.message_type {
+            MessageType::Audio(data) => Some(data),
+            _ => None,
+        }
+    }
 }
 
 /// Builder for ChatMessage
@@ -488,6 +503,12 @@ impl ChatMessageBuilder {
     /// Set the message type as ToolResult
     pub fn tool_result(mut self, tools: Vec<ToolCall>) -> Self {
         self.message_type = MessageType::ToolResult(tools);
+        self
+    }
+
+    /// Set the message type as Audio
+    pub fn audio(mut self, audio_data: Vec<u8>) -> Self {
+        self.message_type = MessageType::Audio(audio_data);
         self
     }
 

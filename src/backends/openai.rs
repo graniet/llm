@@ -749,6 +749,7 @@ fn chat_message_to_api_message(chat_msg: ChatMessage) -> OpenAIChatMessage<'stat
             }
             MessageType::ToolUse(_) => None,
             MessageType::ToolResult(_) => None,
+            MessageType::Audio(_) => None,
         },
         tool_calls: match &chat_msg.message_type {
             MessageType::ToolUse(calls) => {

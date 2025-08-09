@@ -599,6 +599,7 @@ impl ChatProvider for Google {
                             })
                         })
                         .collect(),
+                    MessageType::Audio(_) => vec![],
                 },
             });
         }
@@ -774,6 +775,7 @@ impl ChatProvider for Google {
                             })
                         })
                         .collect(),
+                    MessageType::Audio(_) => vec![],
                 },
             });
         }
