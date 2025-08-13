@@ -26,16 +26,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("Failed to build LLM (OpenAI)");
 
     // Prepare conversation history with example messages
-    let messages = vec![
-        ChatMessage::user()
-            .content("What are the latest news from Los Angeles?")
-            .build(),
-    ];
+    let messages = vec![ChatMessage::user()
+        .content("What are the latest news from Los Angeles?")
+        .build()];
 
     // Send chat request and handle the response
     match llm.chat(&messages).await {
-        Ok(text) => println!("Chat response:\n{}", text),
-        Err(e) => eprintln!("Chat error: {}", e),
+        Ok(text) => println!("Chat response:\n{text}"),
+        Err(e) => eprintln!("Chat error: {e}"),
     }
 
     Ok(())

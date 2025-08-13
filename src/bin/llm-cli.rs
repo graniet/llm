@@ -99,7 +99,7 @@ fn get_provider_info(args: &CliArgs) -> Option<(String, Option<String>)> {
         .and_then(|store| store.get_default_provider().cloned())
     {
         let parts: Vec<&str> = default_provider.split(':').collect();
-        println!("Default provider: {}", default_provider);
+        println!("Default provider: {default_provider}");
         return Some((parts[0].to_string(), parts.get(1).map(|s| s.to_string())));
     }
 
@@ -192,7 +192,7 @@ fn process_input(input: &[u8], prompt: String) -> Vec<ChatMessage> {
         let input_str = String::from_utf8_lossy(input);
         messages.push(
             ChatMessage::user()
-                .content(format!("{}\n\n{}", prompt, input_str))
+                .content(format!("{prompt}\n\n{input_str}"))
                 .build(),
         );
     } else {
@@ -233,7 +233,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(key) = args.provider_or_key.as_deref() {
                     let store = SecretStore::new()?;
                     match store.get(key) {
-                        Some(value) => println!("{}: {}", key, value),
+                        Some(value) => println!("{key}: {value}"),
                         None => println!("{} Secret '{}' not found", "!".bright_yellow(), key),
                     }
                     return Ok(());
@@ -260,7 +260,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } else if args.prompt_or_value.is_none() {
                     let store = SecretStore::new()?;
                     match store.get_default_provider() {
-                        Some(provider) => println!("Default provider: {}", provider),
+                        Some(provider) => println!("Default provider: {provider}"),
                         None => println!("{} No default provider set", "!".bright_yellow()),
                     }
                     return Ok(());
@@ -279,7 +279,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("No provider specified. Use --provider, provider:model argument, or set a default provider with 'llm default <provider:model>'")?;
 
     let backend =
-        LLMBackend::from_str(&provider_name).map_err(|e| format!("Invalid provider: {}", e))?;
+        LLMBackend::from_str(&provider_name).map_err(|e| format!("Invalid provider: {e}"))?;
 
     let mut builder = LLMBuilder::new().backend(backend.clone());
 
@@ -309,7 +309,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let provider = builder
         .build()
-        .map_err(|e| format!("Failed to build provider: {}", e))?;
+        .map_err(|e| format!("Failed to build provider: {e}"))?;
 
     let is_pipe = !io::stdin().is_terminal();
 
@@ -328,11 +328,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match provider.chat(&messages).await {
             Ok(response) => {
                 if let Some(text) = response.text() {
-                    println!("{}", text);
+                    println!("{text}");
                 }
             }
             Err(e) => {
-                eprintln!("Error: {}", e);
+                eprintln!("Error: {e}");
             }
         }
         return Ok(());

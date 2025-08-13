@@ -107,7 +107,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Display results with scores
     for (i, item) in results.iter().enumerate() {
-        println!("\n=== LLM #{} ===", i);
+        println!("\n=== LLM #{i} ===");
         println!("Score: {:.2}", item.score);
         println!("Response:\n{}", item.text);
         println!("================\n");

@@ -7,8 +7,7 @@ use std::collections::HashMap;
 use crate::{
     builder::LLMBackend,
     chat::{
-        ChatMessage, ChatProvider, ChatResponse, ChatRole, MessageType, Tool,
-        ToolChoice, Usage,
+        ChatMessage, ChatProvider, ChatResponse, ChatRole, MessageType, Tool, ToolChoice, Usage,
     },
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
@@ -550,7 +549,8 @@ impl ChatProvider for Anthropic {
     async fn chat_stream(
         &self,
         messages: &[ChatMessage],
-    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send>>, LLMError> {
+    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send>>, LLMError>
+    {
         if self.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Anthropic API key".to_string()));
         }
@@ -642,7 +642,10 @@ impl ChatProvider for Anthropic {
                 raw_response: error_text,
             });
         }
-        Ok(crate::chat::create_sse_stream(response, parse_anthropic_sse_chunk))
+        Ok(crate::chat::create_sse_stream(
+            response,
+            parse_anthropic_sse_chunk,
+        ))
     }
 }
 
@@ -704,7 +707,7 @@ pub struct AnthropicModelEntry {
     created_at: DateTime<Utc>,
     id: String,
     #[serde(flatten)]
-    extra: Value
+    extra: Value,
 }
 
 impl ModelListRawEntry for AnthropicModelEntry {

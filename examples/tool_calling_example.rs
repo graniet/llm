@@ -36,8 +36,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Send chat request and handle the response
     // this returns the response as a string. The tool call is also returned as a serialized string. We can deserialize if needed.
     match llm.chat_with_tools(&messages, llm.tools()).await {
-        Ok(text) => println!("Chat response:\n{}", text),
-        Err(e) => eprintln!("Chat error: {}", e),
+        Ok(text) => println!("Chat response:\n{text}"),
+        Err(e) => eprintln!("Chat error: {e}"),
     }
 
     Ok(())

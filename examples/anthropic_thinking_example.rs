@@ -32,13 +32,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match llm.chat(&messages).await {
         Ok(text) => {
             if let Some(thinking) = text.thinking() {
-                println!("Thinking: {}", thinking);
+                println!("Thinking: {thinking}");
             }
             if let Some(text) = text.text() {
-                println!("Text: {}", text);
+                println!("Text: {text}");
             }
         }
-        Err(e) => eprintln!("Chat error: {}", e),
+        Err(e) => eprintln!("Chat error: {e}"),
     }
 
     Ok(())

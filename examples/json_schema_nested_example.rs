@@ -1,5 +1,5 @@
 /// Example demonstrating complex nested JSON schema handling with LLM function calls
-/// 
+///
 /// This example shows how to:
 /// - Define a complex JSON schema for event creation with nested data structures
 /// - Process chat messages with function calls
@@ -89,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     },
                     "required": ["event"]
-                }))
+                })),
         )
         .build()?;
 
@@ -105,7 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Function: {}", call.function.name);
             let args: serde_json::Value = serde_json::from_str(&call.function.arguments)?;
             println!("Nested arguments: {}", serde_json::to_string_pretty(&args)?);
-            
+
             let result = process_tool_call(call)?;
             println!("Result: {}", serde_json::to_string_pretty(&result)?);
         }
@@ -135,26 +135,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         conversation.push(ChatMessage::user().tool_result(tool_results).build());
 
         let final_response = llm.chat_with_tools(&conversation, llm.tools()).await?;
-        println!("\nFinal response: {}", final_response);
+        println!("\nFinal response: {final_response}");
     } else {
-        println!("Direct response: {}", response);
+        println!("Direct response: {response}");
     }
 
     Ok(())
 }
 
 /// Processes a tool call and returns a simulated response
-/// 
+///
 /// # Arguments
 /// * `tool_call` - The tool call to process containing function name and arguments
-/// 
+///
 /// # Returns
 /// * JSON response containing event details or error message
-fn process_tool_call(tool_call: &ToolCall) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+fn process_tool_call(
+    tool_call: &ToolCall,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     match tool_call.function.name.as_str() {
         "create_event" => {
             let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)?;
-            
+
             Ok(json!({
                 "event_id": "evt_12345",
                 "status": "created",

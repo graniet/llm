@@ -97,7 +97,7 @@ pub async fn handle_chat(
 
     let provider = state.llms.get(provider_id).ok_or((
         StatusCode::BAD_REQUEST,
-        format!("Unknown provider: {}", provider_id),
+        format!("Unknown provider: {provider_id}"),
     ))?;
 
     let response = provider
@@ -228,7 +228,7 @@ async fn handle_chain_request(
 
     let final_response = chain_result.get(&last_step_id).ok_or((
         StatusCode::INTERNAL_SERVER_ERROR,
-        format!("No response found for step {}", last_step_id),
+        format!("No response found for step {last_step_id}"),
     ))?;
 
     Ok(Json(ChatResponse {

@@ -41,9 +41,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 print!("{}", delta.unwrap_or("".to_owned()));
                 io::stdout().flush().expect("failed to flush");
             }
-            println!("") //Print a newline
+            println!() //Print a newline
         }
-        Err(e) => eprintln!("Chat error: {}", e),
+        Err(e) => eprintln!("Chat error: {e}"),
     }
 
     Ok(())

@@ -49,7 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .run().await?;
 
     // Display the results from all chain steps
-    println!("Chain results: {:?}", chain_result);
+    println!("Chain results: {chain_result:?}");
 
     Ok(())
 }

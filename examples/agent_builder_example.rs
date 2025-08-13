@@ -9,8 +9,8 @@ use llm::{
     agent::AgentBuilder,
     builder::{LLMBackend, LLMBuilder},
     chat::ChatMessage,
-    memory::{SharedMemory, SlidingWindowMemory},
     cond,
+    memory::{SharedMemory, SlidingWindowMemory},
 };
 
 #[tokio::main]

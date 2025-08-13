@@ -83,7 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("No summary found in chain results")?;
 
     println!("📄 Summary to be spoken:");
-    println!("{}", summary);
+    println!("{summary}");
     println!();
 
     println!("🔊 Step 3: Converting summary to speech with ElevenLabs...");
@@ -99,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output_file = "rust_news_summary.mp3";
     std::fs::write(output_file, audio_data)?;
 
-    println!("✅ Audio saved to: {}", output_file);
+    println!("✅ Audio saved to: {output_file}");
 
     // Step 4: Play the audio using rodio
     println!("🎵 Playing audio with rodio...");

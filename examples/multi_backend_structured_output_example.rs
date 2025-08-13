@@ -48,8 +48,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("Failed to build LLM (OpenAI)");
 
     match llm_openai.chat(&messages).await {
-        Ok(text) => println!("Chat response:\n{}", text),
-        Err(e) => eprintln!("Chat error: {}", e),
+        Ok(text) => println!("Chat response:\n{text}"),
+        Err(e) => eprintln!("Chat error: {e}"),
     }
 
     let llm_ollama = LLMBuilder::new()
@@ -65,8 +65,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("Failed to build LLM (Ollama)");
 
     match llm_ollama.chat(&messages).await {
-        Ok(text) => println!("Ollama chat response:\n{}", text),
-        Err(e) => eprintln!("Chat error: {}", e),
+        Ok(text) => println!("Ollama chat response:\n{text}"),
+        Err(e) => eprintln!("Chat error: {e}"),
     }
 
     Ok(())

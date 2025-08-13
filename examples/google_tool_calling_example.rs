@@ -1,5 +1,5 @@
 //! Example demonstrating tool/function calling with Google's Gemini model
-//! 
+//!
 //! This example shows how to:
 //! - Configure a Google LLM with function calling capabilities
 //! - Define a meeting scheduling function with JSON schema
@@ -25,7 +25,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .temperature(0.7)
         .function(
             FunctionBuilder::new("schedule_meeting")
-                .description("Schedules a meeting with specified attendees at a given time and date.")
+                .description(
+                    "Schedules a meeting with specified attendees at a given time and date.",
+                )
                 .json_schema(json!({
                     "type": "object",
                     "properties": {
@@ -48,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     },
                     "required": ["attendees", "date", "time", "topic"]
-                }))
+                })),
         )
         .build()?;
 
@@ -93,30 +95,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         conversation.push(ChatMessage::user().tool_result(tool_results).build());
 
         let final_response = llm.chat_with_tools(&conversation, llm.tools()).await?;
-        println!("\nFinal response: {}", final_response);
+        println!("\nFinal response: {final_response}");
     } else {
-        println!("Direct response: {}", response);
+        println!("Direct response: {response}");
     }
 
     Ok(())
 }
 
 /// Processes a tool call by executing the requested function with provided arguments
-/// 
+///
 /// # Arguments
 /// * `tool_call` - The tool call containing function name and arguments to process
-/// 
+///
 /// # Returns
 /// * A JSON value containing the result of the function execution
-/// 
+///
 /// # Errors
 /// * If the function arguments cannot be parsed as JSON
 /// * If an unknown function is called
-fn process_tool_call(tool_call: &ToolCall) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+fn process_tool_call(
+    tool_call: &ToolCall,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     match tool_call.function.name.as_str() {
         "schedule_meeting" => {
             let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)?;
-            
+
             Ok(json!({
                 "meeting_id": "mtg_12345",
                 "status": "scheduled",

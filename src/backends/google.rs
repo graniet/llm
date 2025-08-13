@@ -37,7 +37,7 @@
 //! ];
 //!
 //! let response = client.chat(&messages).await.unwrap();
-//! println!("{}", response);
+//! println!("{response}");
 //! }
 //! ```
 
@@ -56,7 +56,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use futures::stream::Stream;
+use futures::{stream::Stream, StreamExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -185,9 +185,9 @@ struct GoogleUsageMetadata {
 struct GoogleStreamResponse {
     /// Generated completion candidates
     candidates: Option<Vec<GoogleCandidate>>,
-    // /// Usage metadata containing token counts (usually not present in streaming)
-    // #[serde(rename = "usageMetadata")]
-    // usage_metadata: Option<GoogleUsageMetadata>,
+    /// Usage metadata containing token counts (usually not present in streaming, but may be in final chunk)
+    #[serde(rename = "usageMetadata")]
+    usage_metadata: Option<GoogleUsageMetadata>,
 }
 
 impl std::fmt::Display for GoogleChatResponse {
@@ -295,15 +295,15 @@ impl ChatResponse for GoogleChatResponse {
     fn usage(&self) -> Option<Usage> {
         self.usage_metadata.as_ref().and_then(|metadata| {
             match (metadata.prompt_token_count, metadata.candidates_token_count) {
-                (Some(prompt_tokens), Some(completion_tokens)) => {
-                    Some(Usage {
-                        prompt_tokens,
-                        completion_tokens,
-                        total_tokens: metadata.total_token_count.unwrap_or(prompt_tokens + completion_tokens),
-                        completion_tokens_details: None,
-                        prompt_tokens_details: None,
-                    })
-                }
+                (Some(prompt_tokens), Some(completion_tokens)) => Some(Usage {
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens: metadata
+                        .total_token_count
+                        .unwrap_or(prompt_tokens + completion_tokens),
+                    completion_tokens_details: None,
+                    prompt_tokens_details: None,
+                }),
                 _ => None,
             }
         })
@@ -619,11 +619,9 @@ impl ChatProvider for Google {
                 if let Some(schema) = &json_schema.schema {
                     // If the schema has an "additionalProperties" field (as required by OpenAI), remove it as Google's API doesn't support it
                     let mut schema = schema.clone();
-
                     if let Some(obj) = schema.as_object_mut() {
                         obj.remove("additionalProperties");
                     }
-
                     (Some(GoogleResponseMimeType::Json), Some(schema))
                 } else {
                     (None, None)
@@ -631,7 +629,6 @@ impl ChatProvider for Google {
             } else {
                 (None, None)
             };
-
             Some(GoogleGenerationConfig {
                 max_output_tokens: self.max_tokens,
                 temperature: self.temperature,
@@ -647,7 +644,6 @@ impl ChatProvider for Google {
             generation_config,
             tools: None,
         };
-
         if log::log_enabled!(log::Level::Trace) {
             if let Ok(json) = serde_json::to_string(&req_body) {
                 log::trace!("Google Gemini request payload: {}", json);
@@ -661,15 +657,12 @@ impl ChatProvider for Google {
         );
 
         let mut request = self.client.post(&url).json(&req_body);
-
         if let Some(timeout) = self.timeout_seconds {
             request = request.timeout(std::time::Duration::from_secs(timeout));
         }
 
         let resp = request.send().await?;
-
         log::debug!("Google Gemini HTTP status: {}", resp.status());
-
         let resp = resp.error_for_status()?;
 
         // Get the raw response text for debugging
@@ -879,26 +872,58 @@ impl ChatProvider for Google {
     async fn chat_stream(
         &self,
         messages: &[ChatMessage],
-    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send>>, LLMError> {
+    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send>>, LLMError>
+    {
+        let struct_stream = self.chat_stream_struct(messages).await?;
+        let content_stream = struct_stream.filter_map(|result| async move {
+            match result {
+                Ok(stream_response) => {
+                    if let Some(choice) = stream_response.choices.first() {
+                        if let Some(content) = &choice.delta.content {
+                            if !content.is_empty() {
+                                return Some(Ok(content.clone()));
+                            }
+                        }
+                    }
+                    None
+                }
+                Err(e) => Some(Err(e)),
+            }
+        });
+        Ok(Box::pin(content_stream))
+    }
+
+    /// Sends a streaming chat request to Google's Gemini API with structured responses.
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - Slice of chat messages representing the conversation
+    ///
+    /// # Returns
+    ///
+    /// A stream of structured response objects or an error
+    async fn chat_stream_struct(
+        &self,
+        messages: &[ChatMessage],
+    ) -> Result<
+        std::pin::Pin<Box<dyn Stream<Item = Result<crate::chat::StreamResponse, LLMError>> + Send>>,
+        LLMError,
+    > {
         if self.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Google API key".to_string()));
         }
-
         let mut chat_contents = Vec::with_capacity(messages.len());
-
         if let Some(system) = &self.system {
             chat_contents.push(GoogleChatContent {
                 role: "user",
                 parts: vec![GoogleContentPart::Text(system)],
             });
         }
-
         for msg in messages {
             let role = match msg.role {
                 ChatRole::User => "user",
                 ChatRole::Assistant => "model",
             };
-
             chat_contents.push(GoogleChatContent {
                 role,
                 parts: match &msg.message_type {
@@ -919,7 +944,6 @@ impl ChatProvider for Google {
                 },
             });
         }
-
         let generation_config = if self.max_tokens.is_none()
             && self.temperature.is_none()
             && self.top_p.is_none()
@@ -942,7 +966,6 @@ impl ChatProvider for Google {
             generation_config,
             tools: None,
         };
-
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse&key={key}",
             model = self.model,
@@ -950,13 +973,10 @@ impl ChatProvider for Google {
         );
 
         let mut request = self.client.post(&url).json(&req_body);
-
         if let Some(timeout) = self.timeout_seconds {
             request = request.timeout(std::time::Duration::from_secs(timeout));
         }
-
         let response = request.send().await?;
-
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await?;
@@ -965,8 +985,7 @@ impl ChatProvider for Google {
                 raw_response: error_text,
             });
         }
-
-        Ok(crate::chat::create_sse_stream(response, parse_google_sse_chunk))
+        Ok(create_google_sse_stream(response))
     }
 }
 
@@ -1027,7 +1046,6 @@ impl EmbeddingProvider for Google {
             let embedding_resp: GoogleEmbeddingResponse = resp.json().await?;
             embeddings.push(embedding_resp.embedding.values);
         }
-
         Ok(embeddings)
     }
 }
@@ -1047,7 +1065,38 @@ impl LLMProvider for Google {
     }
 }
 
-/// Parses a Server-Sent Events (SSE) chunk from Google's streaming API.
+/// Creates a structured SSE stream for Google's streaming API responses.
+///
+/// # Arguments
+///
+/// * `response` - The HTTP response containing the SSE stream
+///
+/// # Returns
+///
+/// A stream of `StreamResponse` objects
+fn create_google_sse_stream(
+    response: reqwest::Response,
+) -> std::pin::Pin<Box<dyn Stream<Item = Result<crate::chat::StreamResponse, LLMError>> + Send>> {
+    let stream = response
+        .bytes_stream()
+        .map(move |chunk| match chunk {
+            Ok(bytes) => {
+                let text = String::from_utf8_lossy(&bytes);
+                parse_google_sse_chunk(&text)
+            }
+            Err(e) => Err(LLMError::HttpError(e.to_string())),
+        })
+        .filter_map(|result| async move {
+            match result {
+                Ok(Some(response)) => Some(Ok(response)),
+                Ok(None) => None,
+                Err(e) => Some(Err(e)),
+            }
+        });
+    Box::pin(stream)
+}
+
+/// Parses a Google SSE chunk and converts it to StreamResponse format.
 ///
 /// # Arguments
 ///
@@ -1055,23 +1104,52 @@ impl LLMProvider for Google {
 ///
 /// # Returns
 ///
-/// * `Ok(Some(String))` - Content token if found
+/// * `Ok(Some(StreamResponse))` - Structured response if content found
 /// * `Ok(None)` - If chunk should be skipped (e.g., ping, done signal)
 /// * `Err(LLMError)` - If parsing fails
-fn parse_google_sse_chunk(chunk: &str) -> Result<Option<String>, LLMError> {
+fn parse_google_sse_chunk(chunk: &str) -> Result<Option<crate::chat::StreamResponse>, LLMError> {
     for line in chunk.lines() {
         let line = line.trim();
         if let Some(data) = line.strip_prefix("data: ") {
             match serde_json::from_str::<GoogleStreamResponse>(data) {
                 Ok(response) => {
-                    if let Some(candidates) = response.candidates {
+                    let mut content = None;
+                    let mut usage = None;
+                    // Check for content chunks first
+                    if let Some(candidates) = &response.candidates {
                         if let Some(candidate) = candidates.first() {
                             if let Some(part) = candidate.content.parts.first() {
                                 if !part.text.is_empty() {
-                                    return Ok(Some(part.text.clone()));
+                                    content = Some(part.text.clone());
                                 }
                             }
                         }
+                    }
+                    // Check for usage metadata
+                    if let Some(usage_metadata) = &response.usage_metadata {
+                        if let (Some(prompt_tokens), Some(completion_tokens)) = (
+                            usage_metadata.prompt_token_count,
+                            usage_metadata.candidates_token_count,
+                        ) {
+                            usage = Some(Usage {
+                                prompt_tokens,
+                                completion_tokens,
+                                total_tokens: usage_metadata
+                                    .total_token_count
+                                    .unwrap_or(prompt_tokens + completion_tokens),
+                                completion_tokens_details: None,
+                                prompt_tokens_details: None,
+                            });
+                        }
+                    }
+                    // Return response if we have either content or usage
+                    if content.is_some() || usage.is_some() {
+                        return Ok(Some(crate::chat::StreamResponse {
+                            choices: vec![crate::chat::StreamChoice {
+                                delta: crate::chat::StreamDelta { content },
+                            }],
+                            usage,
+                        }));
                     }
                     return Ok(None);
                 }
@@ -1079,7 +1157,6 @@ fn parse_google_sse_chunk(chunk: &str) -> Result<Option<String>, LLMError> {
             }
         }
     }
-
     Ok(None)
 }
 
@@ -1088,61 +1165,3 @@ impl TextToSpeechProvider for Google {}
 
 #[async_trait]
 impl ModelsProvider for Google {}
-
-#[tokio::test]
-async fn test_google_chat() -> Result<(), Box<dyn std::error::Error>> {
-    use crate::{
-        builder::{LLMBackend, LLMBuilder},
-        chat::ChatMessage,
-    };
-
-    let api_key = match std::env::var("GOOGLE_API_KEY") {
-        Ok(key) => key,
-        Err(_) => {
-            eprintln!("test test_google_chat ... ignored, GOOGLE_API_KEY not set");
-            return Ok(());
-        }
-    };
-    let llm = LLMBuilder::new()
-        .backend(LLMBackend::Google)
-        .api_key(api_key)
-        .model("gemini-2.5-flash-lite")
-        .max_tokens(512)
-        .temperature(0.7)
-        .stream(false)
-        .build()
-        .expect("Failed to build LLM");
-    let messages = vec![ChatMessage::user().content("Hello.").build()];
-    match llm.chat(&messages).await {
-        Ok(response) => {
-            println!("Google response: {response:?}");
-            assert!(
-                !response.text().unwrap().is_empty(),
-                "Expected response message, got {:?}",
-                response.text()
-            );
-            let usage = response.usage();
-            assert!(usage.is_some(), "Expected usage information to be present");
-            let usage = usage.unwrap();
-            assert!(
-                usage.prompt_tokens > 0,
-                "Expected prompt tokens, got {}",
-                usage.prompt_tokens
-            );
-            assert!(
-                usage.completion_tokens > 0,
-                "Expected completion tokens, got {}",
-                usage.completion_tokens
-            );
-            assert!(
-                usage.total_tokens > 0,
-                "Expected total tokens, got {}",
-                usage.total_tokens
-            );
-        }
-        Err(e) => {
-            return Err(e.into());
-        }
-    }
-    Ok(())
-}

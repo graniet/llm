@@ -116,10 +116,7 @@ impl<T: MemoryProvider> MemoryProvider for SharedMemory<T> {
         if let Some(sender) = &self.event_sender {
             let mut msg = message.clone();
             msg.content = msg.content.replace(&format!("[{role}]"), "");
-            let event = MessageEvent {
-                role,
-                msg,
-            };
+            let event = MessageEvent { role, msg };
             let _ = sender.send(event);
         }
 

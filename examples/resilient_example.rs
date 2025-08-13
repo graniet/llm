@@ -26,8 +26,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()];
 
     let response = llm.chat(&messages).await?;
-    println!("{}", response);
+    println!("{response}");
     Ok(())
 }
-
-

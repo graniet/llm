@@ -68,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .run().await?;
 
     // Display results from both steps
-    println!("Results: {:?}", chain_res);
+    println!("Results: {chain_res:?}");
 
     Ok(())
 }

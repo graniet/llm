@@ -25,6 +25,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Transcribe audio content
     let resp = stt.transcribe(audio_bytes).await?;
 
-    println!("Transcription: {}", resp);
+    println!("Transcription: {resp}");
     Ok(())
 }

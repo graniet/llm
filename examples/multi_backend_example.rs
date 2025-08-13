@@ -89,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .run().await?;
 
     // Display results from all steps
-    println!("Results: {:?}", chain_res);
+    println!("Results: {chain_res:?}");
     // Example output format:
     // chain_res["analysis"] => "The code has potential performance issues..."
     // chain_res["optimization"] => "Here are some suggested optimizations..."

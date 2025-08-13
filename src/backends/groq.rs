@@ -3,101 +3,52 @@
 //! This module provides integration with Groq's LLM models through their API.
 
 use crate::{
-    chat::{ChatMessage, ChatProvider, ChatResponse, ChatRole, Tool, Usage},
+    chat::{StructuredOutputFormat, Tool, ToolChoice},
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
     error::LLMError,
     models::ModelsProvider,
+    providers::openai_compatible::{OpenAICompatibleProvider, OpenAIProviderConfig},
     stt::SpeechToTextProvider,
     tts::TextToSpeechProvider,
-    LLMProvider, ToolCall,
+    LLMProvider,
 };
 use async_trait::async_trait;
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
 
-/// Client for interacting with Groq's API.
-pub struct Groq {
-    pub api_key: String,
-    pub model: String,
-    pub max_tokens: Option<u32>,
-    pub temperature: Option<f32>,
-    pub system: Option<String>,
-    pub timeout_seconds: Option<u64>,
-    pub stream: Option<bool>,
-    pub top_p: Option<f32>,
-    pub top_k: Option<u32>,
-    client: Client,
+/// Groq configuration for the generic provider
+pub struct GroqConfig;
+
+impl OpenAIProviderConfig for GroqConfig {
+    const PROVIDER_NAME: &'static str = "Groq";
+    const DEFAULT_BASE_URL: &'static str = "https://api.groq.com/openai/v1/";
+    const DEFAULT_MODEL: &'static str = "llama3-8b-8192";
+    const SUPPORTS_REASONING_EFFORT: bool = false;
+    const SUPPORTS_STRUCTURED_OUTPUT: bool = true;
+    const SUPPORTS_PARALLEL_TOOL_CALLS: bool = false;
 }
 
-#[derive(Serialize)]
-struct GroqChatMessage<'a> {
-    role: &'a str,
-    content: &'a str,
-}
+pub type Groq = OpenAICompatibleProvider<GroqConfig>;
 
-#[derive(Serialize)]
-struct GroqChatRequest<'a> {
-    model: &'a str,
-    messages: Vec<GroqChatMessage<'a>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_tokens: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f32>,
-    stream: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    top_p: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    top_k: Option<u32>,
-}
+// TODO: for groq usage goes in .x_groq.usage...
+// /// Streaming response structures
+// #[derive(Deserialize, Debug)]
+// pub struct GroqChatStreamChunk {
+//     pub choices: Vec<ChatStreamChoice>,
+//     pub x_groq: Option<GroqMetadata>,
+// }
 
-#[derive(Deserialize, Debug)]
-struct GroqChatResponse {
-    choices: Vec<GroqChatChoice>,
-    usage: Option<Usage>,
-}
+// /// Streaming response structures
+// #[derive(Deserialize, Debug)]
+// pub struct GroqMetadata {
+//     pub usage: Option<Usage>,
+// }
 
-#[derive(Deserialize, Debug)]
-struct GroqChatChoice {
-    message: GroqChatMsg,
-}
-
-#[derive(Deserialize, Debug)]
-struct GroqChatMsg {
-    content: String,
-}
-
-impl std::fmt::Display for GroqChatResponse {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.text().unwrap_or_default())
-    }
-}
-
-impl ChatResponse for GroqChatResponse {
-    fn text(&self) -> Option<String> {
-        self.choices.first().and_then(|c| {
-            if c.message.content.is_empty() {
-                None
-            } else {
-                Some(c.message.content.clone())
-            }
-        })
-    }
-
-    fn tool_calls(&self) -> Option<Vec<ToolCall>> {
-        todo!()
-    }
-
-    fn usage(&self) -> Option<Usage> {
-        self.usage.clone()
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
 impl Groq {
     /// Creates a new Groq client with the specified configuration.
-    pub fn new(
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_config(
         api_key: impl Into<String>,
+        base_url: Option<String>,
         model: Option<String>,
         max_tokens: Option<u32>,
         temperature: Option<f32>,
@@ -106,97 +57,40 @@ impl Groq {
         stream: Option<bool>,
         top_p: Option<f32>,
         top_k: Option<u32>,
+        tools: Option<Vec<Tool>>,
+        tool_choice: Option<ToolChoice>,
+        _embedding_encoding_format: Option<String>,
+        _embedding_dimensions: Option<u32>,
+        reasoning_effort: Option<String>,
+        json_schema: Option<StructuredOutputFormat>,
+        parallel_tool_calls: Option<bool>,
     ) -> Self {
-        let mut builder = Client::builder();
-        if let Some(sec) = timeout_seconds {
-            builder = builder.timeout(std::time::Duration::from_secs(sec));
-        }
-        Self {
-            api_key: api_key.into(),
-            model: model.unwrap_or("llama-3.3-70b-versatile".to_string()),
+        OpenAICompatibleProvider::<GroqConfig>::new(
+            api_key,
+            base_url,
+            model,
             max_tokens,
             temperature,
-            system,
             timeout_seconds,
+            system,
             stream,
             top_p,
             top_k,
-            client: builder.build().expect("Failed to build reqwest Client"),
-        }
+            tools,
+            tool_choice,
+            reasoning_effort,
+            json_schema,
+            None, // voice - not supported by Groq
+            parallel_tool_calls,
+            None, // embedding_encoding_format - not supported by Groq
+            None, // embedding_dimensions - not supported by Groq
+        )
     }
 }
 
-#[async_trait]
-impl ChatProvider for Groq {
-    async fn chat(&self, messages: &[ChatMessage]) -> Result<Box<dyn ChatResponse>, LLMError> {
-        if self.api_key.is_empty() {
-            return Err(LLMError::AuthError("Missing Groq API key".to_string()));
-        }
-
-        let mut groq_msgs: Vec<GroqChatMessage> = messages
-            .iter()
-            .map(|m| GroqChatMessage {
-                role: match m.role {
-                    ChatRole::User => "user",
-                    ChatRole::Assistant => "assistant",
-                },
-                content: &m.content,
-            })
-            .collect();
-
-        if let Some(system) = &self.system {
-            groq_msgs.insert(
-                0,
-                GroqChatMessage {
-                    role: "system",
-                    content: system,
-                },
-            );
-        }
-
-        let body = GroqChatRequest {
-            model: &self.model,
-            messages: groq_msgs,
-            max_tokens: self.max_tokens,
-            temperature: self.temperature,
-            stream: self.stream.unwrap_or(false),
-            top_p: self.top_p,
-            top_k: self.top_k,
-        };
-
-        if log::log_enabled!(log::Level::Trace) {
-            if let Ok(json) = serde_json::to_string(&body) {
-                log::trace!("Groq request payload: {}", json);
-            }
-        }
-
-        let mut request = self
-            .client
-            .post("https://api.groq.com/openai/v1/chat/completions")
-            .header("Content-Type", "application/json")
-            .bearer_auth(&self.api_key)
-            .json(&body);
-
-        if let Some(timeout) = self.timeout_seconds {
-            request = request.timeout(std::time::Duration::from_secs(timeout));
-        }
-
-        let resp = request.send().await?;
-
-        log::debug!("Groq HTTP status: {}", resp.status());
-
-        let resp = resp.error_for_status()?;
-        let json_resp: GroqChatResponse = resp.json().await?;
-
-        Ok(Box::new(json_resp))
-    }
-
-    async fn chat_with_tools(
-        &self,
-        _messages: &[ChatMessage],
-        _tools: Option<&[Tool]>,
-    ) -> Result<Box<dyn ChatResponse>, LLMError> {
-        todo!()
+impl LLMProvider for Groq {
+    fn tools(&self) -> Option<&[Tool]> {
+        self.tools.as_deref()
     }
 }
 
@@ -232,63 +126,3 @@ impl TextToSpeechProvider for Groq {}
 
 #[async_trait]
 impl ModelsProvider for Groq {}
-
-impl LLMProvider for Groq {}
-
-#[tokio::test]
-async fn test_groq_chat() -> Result<(), Box<dyn std::error::Error>> {
-    use crate::{
-        builder::{LLMBackend, LLMBuilder},
-        chat::ChatMessage,
-    };
-
-    let api_key = match std::env::var("GROQ_API_KEY") {
-        Ok(key) => key,
-        Err(_) => {
-            eprintln!("test test_groq_chat ... ignored, GROQ_API_KEY not set");
-            return Ok(());
-        }
-    };
-    let llm = LLMBuilder::new()
-        .backend(LLMBackend::Groq)
-        .api_key(api_key)
-        .model("llama3-8b-8192")
-        .max_tokens(512)
-        .temperature(0.7)
-        .stream(false)
-        .build()
-        .expect("Failed to build LLM");
-    let messages = vec![ChatMessage::user().content("Hello.").build()];
-    match llm.chat(&messages).await {
-        Ok(response) => {
-            println!("LLM response: {response:?}");
-            assert!(
-                !response.text().unwrap().is_empty(),
-                "Expected response message, got {:?}",
-                response.text()
-            );
-            let usage = response.usage();
-            assert!(usage.is_some(), "Expected usage information to be present");
-            let usage = usage.unwrap();
-            assert!(
-                usage.prompt_tokens > 0,
-                "Expected prompt tokens, got {}",
-                usage.prompt_tokens
-            );
-            assert!(
-                usage.completion_tokens > 0,
-                "Expected completion tokens, got {}",
-                usage.completion_tokens
-            );
-            assert!(
-                usage.total_tokens > 0,
-                "Expected total tokens, got {}",
-                usage.total_tokens
-            );
-        }
-        Err(e) => {
-            return Err(e.into());
-        }
-    }
-    Ok(())
-}

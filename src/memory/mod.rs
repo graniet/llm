@@ -6,15 +6,15 @@
 //! - RAGMemory: Document-based retrieval (future)
 
 pub mod chat_wrapper;
+pub mod cond_macros;
 pub mod shared_memory;
 pub mod sliding_window;
-pub mod cond_macros;
 
 use async_trait::async_trait;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use regex::Regex;
 
 use crate::{chat::ChatMessage, error::LLMError};
 
@@ -71,11 +71,12 @@ impl MessageCondition {
             MessageCondition::Empty => event.msg.content.is_empty(),
             MessageCondition::All(inner) => inner.iter().all(|c| c.matches(event)),
             MessageCondition::AnyOf(inner) => inner.iter().any(|c| c.matches(event)),
-            MessageCondition::Regex(regex) => Regex::new(regex).map(|re| re.is_match(&event.msg.content)).unwrap_or(false),
+            MessageCondition::Regex(regex) => Regex::new(regex)
+                .map(|re| re.is_match(&event.msg.content))
+                .unwrap_or(false),
         }
     }
 }
-
 
 pub use chat_wrapper::ChatWithMemory;
 pub use shared_memory::SharedMemory;

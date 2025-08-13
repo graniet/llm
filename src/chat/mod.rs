@@ -12,16 +12,24 @@ use crate::{error::LLMError, ToolCall};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Usage {
     /// Number of tokens in the prompt
+    #[serde(alias = "input_tokens")]
     pub prompt_tokens: u32,
     /// Number of tokens in the completion
+    #[serde(alias = "output_tokens")]
     pub completion_tokens: u32,
     /// Total number of tokens used
     pub total_tokens: u32,
     /// Breakdown of completion tokens, if available
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        alias = "output_tokens_details"
+    )]
     pub completion_tokens_details: Option<CompletionTokensDetails>,
     /// Breakdown of prompt tokens, if available
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        alias = "input_tokens_details"
+    )]
     pub prompt_tokens_details: Option<PromptTokensDetails>,
 }
 
@@ -344,6 +352,24 @@ pub trait ChatProvider: Sync + Send {
         tools: Option<&[Tool]>,
     ) -> Result<Box<dyn ChatResponse>, LLMError>;
 
+    /// Sends a chat with web search request to the provider
+    ///
+    /// # Arguments
+    ///
+    /// * `input` - The input message
+    ///
+    /// # Returns
+    ///
+    /// The provider's response text or an error
+    async fn chat_with_web_search(
+        &self,
+        _input: String,
+    ) -> Result<Box<dyn ChatResponse>, LLMError> {
+        Err(LLMError::Generic(
+            "Web search not supported for this provider".to_string(),
+        ))
+    }
+
     /// Sends a streaming chat request to the provider with a sequence of messages.
     ///
     /// # Arguments
@@ -364,6 +390,9 @@ pub trait ChatProvider: Sync + Send {
     }
 
     /// Sends a streaming chat request that returns structured response chunks.
+    ///
+    /// ⚠️ Getting usage metadata while streaming have been noticed to be a unstable depending on the provider
+    /// (it can be missing).
     ///
     /// This method returns a stream of `StreamResponse` objects that mimic OpenAI's
     /// streaming response format with `.choices[0].delta.content` and `.usage`.

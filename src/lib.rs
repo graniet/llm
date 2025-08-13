@@ -1,16 +1,25 @@
 //! LLM (Rust LLM) is a unified interface for interacting with Large Language Model providers.
 //!
-//! # Overview
+//! ## Overview
+//!
 //! This crate provides a consistent API for working with different LLM backends by abstracting away
 //! provider-specific implementation details. It supports:
 //!
 //! - Chat-based interactions
+//! - Streaming responses
+//! - Usage metadata in responses
+//! - Tool calls
 //! - Text completion
 //! - Embeddings generation
-//! - Multiple providers (OpenAI, Anthropic, etc.)
+//! - Multiple providers (OpenAI, Anthropic, Google, etc.)
 //! - Request validation and retry logic
 //!
-//! # Architecture
+//! ## Examples
+//!
+//! Many usage examples can be found in the [`examples/`](https://github.com/graniet/llm/tree/main/examples) folder.
+//!
+//! ## Architecture
+//!
 //! The crate is organized into modules that handle different aspects of LLM interactions:
 
 // Re-export for convenience
@@ -21,6 +30,9 @@ use serde::{Deserialize, Serialize};
 
 /// Backend implementations for supported LLM providers like OpenAI, Anthropic, etc.
 pub mod backends;
+
+/// Standard providers with similar API shared by multiple backends (e.g. OpenAI-compatible providers).
+pub mod providers;
 
 /// Builder pattern for configuring and instantiating LLM providers
 pub mod builder;
@@ -121,4 +133,24 @@ pub struct FunctionCall {
     pub name: String,
     /// The arguments to pass to the function, typically serialized as a JSON string.
     pub arguments: String,
+}
+
+impl std::fmt::Display for ToolCall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{{\n  \"id\": \"{}\",\n  \"type\": \"{}\",\n  \"function\": {}\n}}",
+            self.id, self.call_type, self.function
+        )
+    }
+}
+
+impl std::fmt::Display for FunctionCall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{{\n  \"name\": \"{}\",\n  \"arguments\": {}\n}}",
+            self.name, self.arguments
+        )
+    }
 }

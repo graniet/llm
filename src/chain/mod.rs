@@ -157,7 +157,7 @@ impl<'a> PromptChain<'a> {
     fn apply_template(&self, input: &str) -> String {
         let mut result = input.to_string();
         for (k, v) in &self.memory {
-            let pattern = format!("{{{{{}}}}}", k);
+            let pattern = format!("{{{{{k}}}}}");
             result = result.replace(&pattern, v);
         }
         result

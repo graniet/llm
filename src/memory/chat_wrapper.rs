@@ -112,7 +112,9 @@ impl ChatWithMemory {
                 };
 
                 if let (Some(txt), Some(role)) = (response_text, &my_role) {
-                    let msg = ChatMessage::assistant().content(format!("[{role}] {txt}")).build();
+                    let msg = ChatMessage::assistant()
+                        .content(format!("[{role}] {txt}"))
+                        .build();
                     let mut guard = memory.write().await;
                     if let Err(e) = guard.remember_with_role(&msg, role.clone()).await {
                         eprintln!("Memory save error: {e}");
@@ -144,7 +146,10 @@ impl ChatProvider for ChatWithMemory {
         tools: Option<&[Tool]>,
     ) -> Result<Box<dyn ChatResponse>, LLMError> {
         // Reset cycle counter when receiving a user-originated message
-        if messages.iter().any(|m| matches!(m.role, crate::chat::ChatRole::User)) {
+        if messages
+            .iter()
+            .any(|m| matches!(m.role, crate::chat::ChatRole::User))
+        {
             self.cycle_counter
                 .store(0, std::sync::atomic::Ordering::Relaxed);
         }
@@ -152,7 +157,7 @@ impl ChatProvider for ChatWithMemory {
             // record incoming user messages once
             let mut mem = self.memory.write().await;
             for m in messages {
-                mem.remember(&m).await?;
+                mem.remember(m).await?;
             }
         }
 

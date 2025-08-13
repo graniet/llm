@@ -257,7 +257,7 @@ impl<'a> MultiPromptChain<'a> {
     fn replace_template(&self, input: &str) -> String {
         let mut out = input.to_string();
         for (k, v) in &self.memory {
-            let pattern = format!("{{{{{}}}}}", k);
+            let pattern = format!("{{{{{k}}}}}");
             out = out.replace(&pattern, v);
         }
         out

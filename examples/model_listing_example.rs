@@ -22,16 +22,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match llm.list_models(request).await {
         Ok(response) => {
-            println!(
-                "Models available for backend {:?}:",
-                response.get_backend()
-            );
+            println!("Models available for backend {:?}:", response.get_backend());
             for model_id in response.get_models() {
-                println!("- {}", model_id);
+                println!("- {model_id}");
             }
         }
-        Err(e) => eprintln!("Error listing models: {}", e),
+        Err(e) => eprintln!("Error listing models: {e}"),
     }
 
     Ok(())
-} 
+}

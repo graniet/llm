@@ -34,8 +34,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Send chat request and handle the response
     match llm.chat(&messages).await {
-        Ok(text) => println!("{}", text),
-        Err(e) => eprintln!("Chat error: {}", e),
+        Ok(text) => println!("{text}"),
+        Err(e) => eprintln!("Chat error: {e}"),
     }
 
     Ok(())

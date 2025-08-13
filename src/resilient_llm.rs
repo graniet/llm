@@ -94,11 +94,17 @@ impl ResilientLLM {
     }
 
     async fn backoff_sleep(&self, attempt_index: usize) {
-        let mut delay = self.cfg.base_delay_ms.saturating_mul(1u64 << attempt_index.min(16));
+        let mut delay = self
+            .cfg
+            .base_delay_ms
+            .saturating_mul(1u64 << attempt_index.min(16));
         delay = delay.min(self.cfg.max_delay_ms);
         if self.cfg.jitter {
             let span = (delay / 2).max(1);
-            let jitter = ((attempt_index as u64).wrapping_mul(6364136223846793005).wrapping_add(1)) % span;
+            let jitter = ((attempt_index as u64)
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1))
+                % span;
             delay = delay.saturating_sub(jitter);
         }
         sleep(Duration::from_millis(delay)).await;
@@ -142,8 +148,10 @@ impl ChatProvider for ResilientLLM {
     async fn chat_stream(
         &self,
         messages: &[ChatMessage],
-    ) -> Result<std::pin::Pin<Box<dyn futures::stream::Stream<Item = Result<String, LLMError>> + Send>>, LLMError>
-    {
+    ) -> Result<
+        std::pin::Pin<Box<dyn futures::stream::Stream<Item = Result<String, LLMError>> + Send>>,
+        LLMError,
+    > {
         let mut attempts_left = self.cfg.max_attempts;
         let mut idx = 0usize;
         let mut last_err: Option<LLMError> = None;
@@ -306,5 +314,3 @@ impl ModelsProvider for ResilientLLM {
         })
     }
 }
-
-

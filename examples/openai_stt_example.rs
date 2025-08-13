@@ -20,8 +20,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("Failed to build LLM (OpenAI)");
 
     match llm.transcribe_file("audio2.m4a").await {
-        Ok(text) => println!("Audio transcription:\n{}", text),
-        Err(e) => eprintln!("Audio transcription error: {}", e),
+        Ok(text) => println!("Audio transcription:\n{text}"),
+        Err(e) => eprintln!("Audio transcription error: {e}"),
     }
 
     Ok(())

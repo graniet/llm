@@ -4,12 +4,16 @@ on:
   workflow_call:
   push:
     branches: [ main ]
-  pull_request:
+  # pull_request:
+  pull_request_target:
+    types: [labeled]
 
+# NOTE: sending requests to LLM providers in tests might lead to potential abuses
 jobs:
   test:
     name: ✅ Test and build
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request_target'
     steps:
       - uses: actions/checkout@v4
       - name: Install ALSA development libraries
@@ -18,4 +22,33 @@ jobs:
       # - run: cargo fmt -- --check
       - run: cargo clippy --all --all-targets --all-features
       - run: cargo test
+        # if: github.event_name == 'pull_request_target' && contains(github.event.label.name, 'safe-to-test')
+        # env:
+        #   MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+        #   GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        #   GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        #   COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+        #   # OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        #   # ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - run: cargo build --release
+
+  test-pr:
+    name: ✅ Approved tests for PR
+    runs-on: ubuntu-latest
+    # Only run if triggered by pull_request_target with 'safe-to-test' label
+    if: github.event_name == 'pull_request_target' && contains(github.event.label.name, 'safe-to-test')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - run: rustup update
+      - run: cargo clippy --all --all-targets --all-features
+      - run: cargo test
+        # env:
+        #   MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+        #   GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        #   GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        #   COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+        #   # OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        #   # ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       - run: cargo build --release

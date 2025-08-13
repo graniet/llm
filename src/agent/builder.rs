@@ -46,7 +46,7 @@ impl AgentBuilder {
     }
 
     /// Sets the role name for this agent.
-    /// 
+    ///
     /// The role is used to identify messages from this agent in shared memory
     /// and for reactive message filtering.
     pub fn role(mut self, role: impl Into<String>) -> Self {

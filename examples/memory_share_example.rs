@@ -27,14 +27,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let messages1 = vec![ChatMessage::user().content("My name is Alice").build()];
     match llm.chat(&messages1).await {
-        Ok(response) => println!("Response 1: {}", response),
-        Err(e) => eprintln!("Error 1: {}", e),
+        Ok(response) => println!("Response 1: {response}"),
+        Err(e) => eprintln!("Error 1: {e}"),
     }
 
     let messages2 = vec![ChatMessage::user().content("What's my name?").build()];
     match llm2.chat(&messages2).await {
-        Ok(response) => println!("Response 2: {}", response),
-        Err(e) => eprintln!("Error 2: {}", e),
+        Ok(response) => println!("Response 2: {response}"),
+        Err(e) => eprintln!("Error 2: {e}"),
     }
 
     Ok(())

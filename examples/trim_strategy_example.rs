@@ -33,8 +33,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Sending: {}", message.content);
 
         match llm.chat(&[message.clone()]).await {
-            Ok(response) => println!("Response: {}", response),
-            Err(e) => eprintln!("Error: {}", e),
+            Ok(response) => println!("Response: {response}"),
+            Err(e) => eprintln!("Error: {e}"),
         }
 
         if let Some(memory_contents) = llm.memory_contents().await {
