@@ -25,6 +25,48 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Simple content object for system prompts
+#[derive(Debug, Clone, Serialize)]
+pub struct SystemContent {
+    pub text: String,
+    #[serde(rename = "type")]
+    pub content_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<Value>,
+}
+
+impl SystemContent {
+    /// Creates a new text content for system prompts
+    pub fn text(text: String) -> Self {
+        Self {
+            text,
+            content_type: "text".to_string(),
+            cache_control: None,
+        }
+    }
+}
+
+/// System prompt configuration that supports both string and message vector formats.
+#[derive(Debug, Clone)]
+pub enum SystemPrompt {
+    /// Simple string system prompt
+    String(String),
+    /// Vector of content objects for complex system prompts
+    Messages(Vec<SystemContent>),
+}
+
+impl From<String> for SystemPrompt {
+    fn from(s: String) -> Self {
+        SystemPrompt::String(s)
+    }
+}
+
+impl From<&str> for SystemPrompt {
+    fn from(s: &str) -> Self {
+        SystemPrompt::String(s.to_string())
+    }
+}
+
 /// Client for interacting with Anthropic's API.
 ///
 /// Provides methods for chat and completion requests using Anthropic's models.
@@ -35,7 +77,7 @@ pub struct Anthropic {
     pub max_tokens: u32,
     pub temperature: f32,
     pub timeout_seconds: u64,
-    pub system: String,
+    pub system: SystemPrompt,
     pub top_p: Option<f32>,
     pub top_k: Option<u32>,
     pub tools: Option<Vec<Tool>>,
@@ -62,6 +104,14 @@ struct ThinkingConfig {
     budget_tokens: u32,
 }
 
+/// System prompt in the request - can be either a string or vector of content objects
+#[derive(Serialize, Debug)]
+#[serde(untagged)]
+enum RequestSystemPrompt<'a> {
+    String(&'a str),
+    Messages(&'a [SystemContent]),
+}
+
 /// Request payload for Anthropic's messages API endpoint.
 #[derive(Serialize, Debug)]
 struct AnthropicCompleteRequest<'a> {
@@ -72,7 +122,7 @@ struct AnthropicCompleteRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    system: Option<&'a str>,
+    system: Option<RequestSystemPrompt<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -317,7 +367,9 @@ impl Anthropic {
             model: model.unwrap_or_else(|| "claude-3-sonnet-20240229".to_string()),
             max_tokens: max_tokens.unwrap_or(300),
             temperature: temperature.unwrap_or(0.7),
-            system: system.unwrap_or_else(|| "You are a helpful assistant.".to_string()),
+            system: system.map(SystemPrompt::from).unwrap_or_else(|| {
+                SystemPrompt::String("You are a helpful assistant.".to_string())
+            }),
             timeout_seconds: timeout_seconds.unwrap_or(30),
             top_p,
             top_k,
@@ -327,6 +379,18 @@ impl Anthropic {
             thinking_budget_tokens,
             client: builder.build().expect("Failed to build reqwest Client"),
         }
+    }
+
+    /// Sets the system prompt using a vector of SystemContent objects
+    pub fn with_system_messages(mut self, messages: Vec<SystemContent>) -> Self {
+        self.system = SystemPrompt::Messages(messages);
+        self
+    }
+
+    /// Sets the system prompt using a string
+    pub fn with_system_string(mut self, system: String) -> Self {
+        self.system = SystemPrompt::String(system);
+        self
     }
 }
 
@@ -476,12 +540,17 @@ impl ChatProvider for Anthropic {
             None
         };
 
+        let system_prompt = match &self.system {
+            SystemPrompt::String(s) => Some(RequestSystemPrompt::String(s)),
+            SystemPrompt::Messages(msgs) => Some(RequestSystemPrompt::Messages(msgs)),
+        };
+
         let req_body = AnthropicCompleteRequest {
             messages: anthropic_messages,
             model: &self.model,
             max_tokens: Some(self.max_tokens),
             temperature: Some(self.temperature),
-            system: Some(&self.system),
+            system: system_prompt,
             stream: Some(false),
             top_p: self.top_p,
             top_k: self.top_k,
@@ -489,6 +558,11 @@ impl ChatProvider for Anthropic {
             tool_choice: final_tool_choice,
             thinking,
         };
+
+        // print req_body as json
+        if let Ok(json) = serde_json::to_string(&req_body) {
+            log::info!("Anthropic request payload: {}", json);
+        }
 
         let mut request = self
             .client
@@ -603,12 +677,17 @@ impl ChatProvider for Anthropic {
             })
             .collect();
 
+        let system_prompt = match &self.system {
+            SystemPrompt::String(s) => Some(RequestSystemPrompt::String(s)),
+            SystemPrompt::Messages(msgs) => Some(RequestSystemPrompt::Messages(msgs)),
+        };
+
         let req_body = AnthropicCompleteRequest {
             messages: anthropic_messages,
             model: &self.model,
             max_tokens: Some(self.max_tokens),
             temperature: Some(self.temperature),
-            system: Some(&self.system),
+            system: system_prompt,
             stream: Some(true),
             top_p: self.top_p,
             top_k: self.top_k,
