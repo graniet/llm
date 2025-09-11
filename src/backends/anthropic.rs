@@ -559,11 +559,6 @@ impl ChatProvider for Anthropic {
             thinking,
         };
 
-        // print req_body as json
-        if let Ok(json) = serde_json::to_string(&req_body) {
-            log::info!("Anthropic request payload: {}", json);
-        }
-
         let mut request = self
             .client
             .post("https://api.anthropic.com/v1/messages")
