@@ -1,3 +1,7 @@
 /target
 .env*
 .cargo/config.toml
+/logs/
+/strace_*.txt
+/flake.test-result.json
+/test.shellcheck-result.txt
