@@ -5,3 +5,5 @@
 /strace_*.txt
 /flake.test-result.json
 /test.shellcheck-result.txt
+*~
+/result
