@@ -62,6 +62,30 @@ llm = { version = "1.2.4", features = ["openai", "anthropic", "ollama", "deepsee
 
 More details in the [`api_example`](examples/api_example.rs)
 
+## Nixification
+
+This project can be built and developed using Nix flakes, ensuring a consistent and reproducible environment.
+
+### Build with Nix
+
+To build the project using Nix, run the following command from the project root:
+
+```bash
+nix build .#llm
+```
+
+This will build the `llm` package and place the resulting executable in `result/bin/llm`.
+
+### Development Environment with Nix
+
+To enter a development shell with the Rust toolchain and other necessary tools, run:
+
+```bash
+nix develop
+```
+
+Inside the development shell, you can use `cargo` commands as usual (e.g., `cargo build`, `cargo test`).
+
 ## More examples
 
 | Name | Description |

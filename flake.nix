@@ -19,6 +19,22 @@
           pname = "llm";
           version = "1.3.5"; # Get this from Cargo.toml
           src = ./.;
+          dontFixup = true;
+          nativeBuildInputs = with pkgs; [
+            pkg-config
+            openssl
+            # Add any other build dependencies here
+          ];
+          buildInputs = with pkgs; [
+            # Add any runtime dependencies here
+          ];
+        };
+
+        packages.log-analyzer = naersk-lib.buildPackage {
+          pname = "log-analyzer";
+          version = "0.1.0"; # Get this from Cargo.toml
+          src = ./log_analyzer;
+          dontFixup = true;
           nativeBuildInputs = with pkgs; [
             pkg-config
             openssl
@@ -30,8 +46,8 @@
         };
 
         devShells.default = pkgs.mkShell {
-          inputsFrom = [ self.packages.llm ];
           packages = with pkgs; [
+            self.packages.${system}.llm
             rustc
             cargo
             rust-analyzer
