@@ -1,14 +1,14 @@
-
 {
   description = "Nix flake for the llm Rust project.";
 
   inputs = {
     nixpkgs.url = "github:meta-introspector/nixpkgs?ref=feature/CRQ-016-nixify";
     naersk.url = "github:meta-introspector/naersk?ref=feature/CRQ-016-nixify";
+    ai-ml-zk-ops.url = "github:meta-introspector/ai-ml-zk-ops?ref=feature/concept-to-nix-8s";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, naersk, flake-utils }:
+  outputs = { self, nixpkgs, naersk, ai-ml-zk-ops, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
