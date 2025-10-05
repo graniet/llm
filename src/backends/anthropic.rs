@@ -370,7 +370,23 @@ impl ChatProvider for Anthropic {
                         tool_result_id: None,
                         tool_output: None,
                     }],
-                    MessageType::Pdf(_) => unimplemented!(),
+                    MessageType::Pdf(raw_bytes) => {
+                        vec![MessageContent {
+                            message_type: Some("document"),
+                            text: None,
+                            image_url: None,
+                            source: Some(ImageSource {
+                                source_type: "base64",
+                                media_type: "application/pdf",
+                                data: BASE64.encode(raw_bytes),
+                            }),
+                            tool_use_id: None,
+                            tool_input: None,
+                            tool_name: None,
+                            tool_result_id: None,
+                            tool_output: None,
+                        }]
+                    }
                     MessageType::Image((image_mime, raw_bytes)) => {
                         vec![MessageContent {
                             message_type: Some("image"),
