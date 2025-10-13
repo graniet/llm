@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    builder::LLMBackend,
+    builder::{LLMBackend, SystemContent, SystemPrompt},
     chat::{
         ChatMessage, ChatProvider, ChatResponse, ChatRole, MessageType, Tool, ToolChoice, Usage,
     },
@@ -24,48 +24,6 @@ use futures::stream::Stream;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-/// Simple content object for system prompts
-#[derive(Debug, Clone, Serialize)]
-pub struct SystemContent {
-    pub text: String,
-    #[serde(rename = "type")]
-    pub content_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cache_control: Option<Value>,
-}
-
-impl SystemContent {
-    /// Creates a new text content for system prompts
-    pub fn text(text: String) -> Self {
-        Self {
-            text,
-            content_type: "text".to_string(),
-            cache_control: None,
-        }
-    }
-}
-
-/// System prompt configuration that supports both string and message vector formats.
-#[derive(Debug, Clone)]
-pub enum SystemPrompt {
-    /// Simple string system prompt
-    String(String),
-    /// Vector of content objects for complex system prompts
-    Messages(Vec<SystemContent>),
-}
-
-impl From<String> for SystemPrompt {
-    fn from(s: String) -> Self {
-        SystemPrompt::String(s)
-    }
-}
-
-impl From<&str> for SystemPrompt {
-    fn from(s: &str) -> Self {
-        SystemPrompt::String(s.to_string())
-    }
-}
 
 /// Client for interacting with Anthropic's API.
 ///
@@ -350,7 +308,7 @@ impl Anthropic {
         max_tokens: Option<u32>,
         temperature: Option<f32>,
         timeout_seconds: Option<u64>,
-        system: Option<String>,
+        system: Option<SystemPrompt>,
         top_p: Option<f32>,
         top_k: Option<u32>,
         tools: Option<Vec<Tool>>,
@@ -367,7 +325,7 @@ impl Anthropic {
             model: model.unwrap_or_else(|| "claude-3-sonnet-20240229".to_string()),
             max_tokens: max_tokens.unwrap_or(300),
             temperature: temperature.unwrap_or(0.7),
-            system: system.map(SystemPrompt::from).unwrap_or_else(|| {
+            system: system.unwrap_or_else(|| {
                 SystemPrompt::String("You are a helpful assistant.".to_string())
             }),
             timeout_seconds: timeout_seconds.unwrap_or(30),

@@ -12,6 +12,8 @@ use crate::{
     memory::{ChatWithMemory, MemoryProvider, SlidingWindowMemory, TrimStrategy},
     LLMProvider,
 };
+use serde::Serialize;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -19,6 +21,154 @@ use tokio::sync::RwLock;
 /// A function type for validating LLM provider outputs.
 /// Takes a response string and returns Ok(()) if valid, or Err with an error message if invalid.
 pub type ValidatorFn = dyn Fn(&str) -> Result<(), String> + Send + Sync + 'static;
+
+/// Content object for structured system prompts with optional cache control.
+///
+/// This allows fine-grained control over system prompt components, particularly
+/// useful for providers like Anthropic that support prompt caching.
+#[derive(Debug, Clone, Serialize)]
+pub struct SystemContent {
+    pub text: String,
+    #[serde(rename = "type")]
+    pub content_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<Value>,
+}
+
+impl SystemContent {
+    /// Creates a new text content segment for system prompts.
+    ///
+    /// # Arguments
+    ///
+    /// * `text` - The text content
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use llm::builder::SystemContent;
+    ///
+    /// let content = SystemContent::text("You are a helpful assistant.".to_string());
+    /// ```
+    pub fn text(text: String) -> Self {
+        Self {
+            text,
+            content_type: "text".to_string(),
+            cache_control: None,
+        }
+    }
+
+    /// Creates a new text content segment with cache control.
+    ///
+    /// # Arguments
+    ///
+    /// * `text` - The text content
+    /// * `cache_control` - Cache control directives (provider-specific)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use llm::builder::SystemContent;
+    /// use serde_json::json;
+    ///
+    /// let content = SystemContent::text_with_cache(
+    ///     "You are a helpful assistant.".to_string(),
+    ///     json!({"type": "ephemeral"})
+    /// );
+    /// ```
+    pub fn text_with_cache(text: String, cache_control: Value) -> Self {
+        Self {
+            text,
+            content_type: "text".to_string(),
+            cache_control: Some(cache_control),
+        }
+    }
+}
+
+/// System prompt configuration supporting both simple strings and structured message formats.
+///
+/// This enum allows system prompts to be specified either as a simple string or a vector
+/// of content objects with fine-grained control, particularly useful for caching parts
+/// of the system prompt with certain providers.
+#[derive(Debug, Clone)]
+pub enum SystemPrompt {
+    String(String),
+    Messages(Vec<SystemContent>),
+}
+
+impl SystemPrompt {
+    /// Converts the system prompt to a string representation.
+    ///
+    /// For `SystemPrompt::String`, returns the string directly.
+    /// For `SystemPrompt::Messages`, concatenates all message text with newlines.
+    pub fn to_string_representation(self) -> String {
+        match self {
+            SystemPrompt::String(s) => s,
+            SystemPrompt::Messages(messages) => messages
+                .into_iter()
+                .map(|m| m.text)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
+}
+
+impl From<SystemPrompt> for String {
+    fn from(prompt: SystemPrompt) -> String {
+        prompt.to_string_representation()
+    }
+}
+
+pub trait IntoSystemMessage {
+    fn into_system_message(self) -> SystemPrompt;
+}
+
+impl IntoSystemMessage for String {
+    fn into_system_message(self) -> SystemPrompt {
+        SystemPrompt::String(self)
+    }
+}
+
+impl IntoSystemMessage for &str {
+    fn into_system_message(self) -> SystemPrompt {
+        SystemPrompt::String(self.to_string())
+    }
+}
+
+impl IntoSystemMessage for Vec<String> {
+    fn into_system_message(self) -> SystemPrompt {
+        if self.len() == 1 {
+            SystemPrompt::String(self.into_iter().next().unwrap())
+        } else {
+            SystemPrompt::Messages(self.into_iter().map(SystemContent::text).collect())
+        }
+    }
+}
+
+impl IntoSystemMessage for Vec<&str> {
+    fn into_system_message(self) -> SystemPrompt {
+        if self.len() == 1 {
+            SystemPrompt::String(self[0].to_string())
+        } else {
+            SystemPrompt::Messages(
+                self.into_iter()
+                    .map(|s| SystemContent::text(s.to_string()))
+                    .collect(),
+            )
+        }
+    }
+}
+
+impl IntoSystemMessage for Vec<SystemContent> {
+    fn into_system_message(self) -> SystemPrompt {
+        SystemPrompt::Messages(self)
+    }
+}
+
+impl IntoSystemMessage for SystemPrompt {
+    fn into_system_message(self) -> SystemPrompt {
+        self
+    }
+}
 
 /// Supported LLM backend providers.
 #[derive(Debug, Clone, PartialEq)]
@@ -124,7 +274,7 @@ pub struct LLMBuilder {
     /// Temperature parameter for controlling response randomness (0.0-1.0)
     temperature: Option<f32>,
     /// System prompt/context to guide model behavior
-    system: Option<String>,
+    system: Option<SystemPrompt>,
     /// Request timeout duration in seconds
     timeout_seconds: Option<u64>,
     /// Top-p (nucleus) sampling parameter
@@ -243,8 +393,52 @@ impl LLMBuilder {
     }
 
     /// Sets the system prompt/context.
-    pub fn system(mut self, system: impl Into<String>) -> Self {
-        self.system = Some(system.into());
+    ///
+    /// This method accepts any type that implements `IntoSystemMessage`, including:
+    /// - `String` or `&str` for simple text prompts
+    /// - `Vec<String>` or `Vec<&str>` for multiple text segments
+    /// - `Vec<SystemContent>` for structured prompts with cache control
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use llm::builder::LLMBuilder;
+    ///
+    /// // Simple string
+    /// let builder = LLMBuilder::new()
+    ///     .system("You are a helpful assistant.");
+    ///
+    /// // Multiple segments (converted to structured format)
+    /// let builder = LLMBuilder::new()
+    ///     .system(vec!["You are a helpful assistant.", "You are concise."]);
+    /// ```
+    pub fn system(mut self, system: impl IntoSystemMessage) -> Self {
+        self.system = Some(system.into_system_message());
+        self
+    }
+
+    /// Sets structured system messages with fine-grained control.
+    ///
+    /// This method is useful when you need advanced features like cache control
+    /// on specific parts of the system prompt (currently supported by Anthropic).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use llm::builder::{LLMBuilder, SystemContent};
+    /// use serde_json::json;
+    ///
+    /// let builder = LLMBuilder::new()
+    ///     .system_messages(vec![
+    ///         SystemContent::text("You are a helpful assistant.".to_string()),
+    ///         SystemContent::text_with_cache(
+    ///             "Long context here...".to_string(),
+    ///             json!({"type": "ephemeral"})
+    ///         ),
+    ///     ]);
+    /// ```
+    pub fn system_messages(mut self, messages: Vec<SystemContent>) -> Self {
+        self.system = Some(SystemPrompt::Messages(messages));
         self
     }
 
@@ -656,7 +850,7 @@ impl LLMBuilder {
                         self.max_tokens,
                         self.temperature,
                         self.timeout_seconds,
-                        self.system,
+                        self.system.map(Into::into),
                         self.top_p,
                         self.top_k,
                         self.embedding_encoding_format,
@@ -740,7 +934,7 @@ impl LLMBuilder {
                         self.max_tokens,
                         self.temperature,
                         self.timeout_seconds,
-                        self.system,
+                        self.system.map(Into::into),
                         self.top_p,
                         self.top_k,
                         self.json_schema,
@@ -766,7 +960,7 @@ impl LLMBuilder {
                         self.max_tokens,
                         self.temperature,
                         self.timeout_seconds,
-                        self.system,
+                        self.system.map(Into::into),
                     );
                     Box::new(deepseek)
                 }
@@ -789,7 +983,7 @@ impl LLMBuilder {
                         self.max_tokens,
                         self.temperature,
                         self.timeout_seconds,
-                        self.system,
+                        self.system.map(Into::into),
                         self.top_p,
                         self.top_k,
                         self.embedding_encoding_format,
@@ -818,7 +1012,7 @@ impl LLMBuilder {
                         self.max_tokens,
                         self.temperature,
                         self.timeout_seconds,
-                        self.system,
+                        self.system.map(Into::into),
                         self.top_p,
                         self.top_k,
                     );
@@ -843,7 +1037,7 @@ impl LLMBuilder {
                         self.max_tokens,
                         self.temperature,
                         self.timeout_seconds,
-                        self.system,
+                        self.system.map(Into::into),
                         self.top_p,
                         self.top_k,
                         self.json_schema,
@@ -871,7 +1065,7 @@ impl LLMBuilder {
                         self.max_tokens,
                         self.temperature,
                         self.timeout_seconds,
-                        self.system,
+                        self.system.map(Into::into),
                         self.top_p,
                         self.top_k,
                         self.tools,
@@ -905,7 +1099,7 @@ impl LLMBuilder {
                         self.max_tokens,
                         self.temperature,
                         self.timeout_seconds,
-                        self.system,
+                        self.system.map(Into::into),
                         self.top_p,
                         self.top_k,
                         self.tools,
@@ -938,7 +1132,7 @@ impl LLMBuilder {
                         self.max_tokens,
                         self.temperature,
                         self.timeout_seconds,
-                        self.system,
+                        self.system.map(Into::into),
                         self.top_p,
                         self.top_k,
                         tools,
@@ -975,7 +1169,7 @@ impl LLMBuilder {
                         self.max_tokens,
                         self.temperature,
                         self.timeout_seconds,
-                        self.system,
+                        self.system.map(Into::into),
                         self.top_p,
                         self.top_k,
                         self.tools,
@@ -1007,7 +1201,7 @@ impl LLMBuilder {
                         self.max_tokens,
                         self.temperature,
                         self.timeout_seconds,
-                        self.system,
+                        self.system.map(Into::into),
                         self.top_p,
                         self.top_k,
                         tools,
@@ -1054,7 +1248,7 @@ impl LLMBuilder {
                         self.max_tokens,
                         self.temperature,
                         self.timeout_seconds,
-                        self.system,
+                        self.system.map(Into::into),
                         self.top_p,
                         self.top_k,
                         self.embedding_encoding_format,
