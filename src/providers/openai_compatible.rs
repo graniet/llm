@@ -558,10 +558,16 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
                 request = request.header(key, value);
             }
         }
+        if log::log_enabled!(log::Level::Trace) {
+            if let Ok(json) = serde_json::to_string(&body) {
+                log::trace!("{} request payload: {}", T::PROVIDER_NAME, json);
+            }
+        }
         if let Some(timeout) = self.timeout_seconds {
             request = request.timeout(std::time::Duration::from_secs(timeout));
         }
         let response = request.send().await?;
+        log::debug!("{} HTTP status: {}", T::PROVIDER_NAME, response.status());
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await?;
