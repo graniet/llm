@@ -40,6 +40,7 @@ pub struct OpenAICompatibleProvider<T: OpenAIProviderConfig> {
     pub reasoning_effort: Option<String>,
     pub json_schema: Option<StructuredOutputFormat>,
     pub voice: Option<String>,
+    pub extra_body: Option<serde_json::Value>,
     pub parallel_tool_calls: bool,
     pub embedding_encoding_format: Option<String>,
     pub embedding_dimensions: Option<u32>,
@@ -135,6 +136,8 @@ pub struct OpenAIChatRequest<'a> {
     pub stream_options: Option<OpenAIStreamOptions>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parallel_tool_calls: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_body: Option<serde_json::Value>,
 }
 
 /// Generic OpenAI-compatible chat response
@@ -306,6 +309,7 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
         reasoning_effort: Option<String>,
         json_schema: Option<StructuredOutputFormat>,
         voice: Option<String>,
+        extra_body: Option<serde_json::Value>,
         parallel_tool_calls: Option<bool>,
         normalize_response: Option<bool>,
         embedding_encoding_format: Option<String>,
@@ -331,6 +335,7 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
             reasoning_effort,
             json_schema,
             voice,
+            extra_body,
             parallel_tool_calls: parallel_tool_calls.unwrap_or(false),
             normalize_response: normalize_response.unwrap_or(true),
             embedding_encoding_format,
@@ -432,6 +437,7 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
             response_format,
             stream_options: None,
             parallel_tool_calls,
+            extra_body: self.extra_body.clone(),
         };
         let url = self
             .base_url
@@ -547,6 +553,7 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
             } else {
                 None
             },
+            extra_body: self.extra_body.clone(),
         };
         let url = self
             .base_url

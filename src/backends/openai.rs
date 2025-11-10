@@ -166,6 +166,8 @@ pub struct OpenAIAPIChatRequest<'a> {
     pub response_format: Option<OpenAIResponseFormat>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<OpenAIStreamOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_body: Option<serde_json::Value>,
 }
 
 impl OpenAI {
@@ -207,6 +209,7 @@ impl OpenAI {
         reasoning_effort: Option<String>,
         json_schema: Option<StructuredOutputFormat>,
         voice: Option<String>,
+        extra_body: Option<serde_json::Value>,
         enable_web_search: Option<bool>,
         web_search_context_size: Option<String>,
         web_search_user_location_type: Option<String>,
@@ -234,6 +237,7 @@ impl OpenAI {
                 reasoning_effort,
                 json_schema,
                 voice,
+                extra_body,
                 None, // parallel_tool_calls
                 normalize_response,
                 embedding_encoding_format,
@@ -323,6 +327,7 @@ impl ChatProvider for OpenAI {
             reasoning_effort: self.provider.reasoning_effort.clone(),
             response_format,
             stream_options: None,
+            extra_body: self.provider.extra_body.clone(),
         };
         let url = self
             .provider
@@ -457,6 +462,7 @@ impl ChatProvider for OpenAI {
             stream_options: Some(OpenAIStreamOptions {
                 include_usage: true,
             }),
+            extra_body: self.provider.extra_body.clone(),
         };
         let url = self
             .provider
@@ -659,6 +665,7 @@ impl OpenAI {
             reasoning_effort: self.provider.reasoning_effort.clone(),
             response_format: None, // Hosted tools don't use structured output
             stream_options: None,
+            extra_body: self.provider.extra_body.clone(),
         };
 
         let url = self
