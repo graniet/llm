@@ -161,6 +161,8 @@ pub struct LLMBuilder {
     deployment_id: Option<String>,
     /// Voice
     voice: Option<String>,
+    /// ExtraBody
+    extra_body: Option<serde_json::Value>,
     /// Search parameters for providers that support search functionality
     xai_search_mode: Option<String>,
     /// XAI search source type
@@ -391,6 +393,13 @@ impl LLMBuilder {
     /// Set the voice.
     pub fn voice(mut self, voice: impl Into<String>) -> Self {
         self.voice = Some(voice.into());
+        self
+    }
+
+    /// Set the extra body.
+    pub fn extra_body(mut self, extra_body: impl serde::Serialize) -> Self {
+        let value = serde_json::to_value(extra_body).ok();
+        self.extra_body = value;
         self
     }
 
@@ -667,6 +676,7 @@ impl LLMBuilder {
                         self.reasoning_effort,
                         self.json_schema,
                         self.voice,
+                        self.extra_body,
                         self.openai_enable_web_search,
                         self.openai_web_search_context_size,
                         self.openai_web_search_user_location_type,
@@ -876,6 +886,7 @@ impl LLMBuilder {
                         self.top_k,
                         self.tools,
                         self.tool_choice,
+                        self.extra_body,
                         None, // embedding_encoding_format
                         None, // embedding_dimensions
                         None, // reasoning_effort
@@ -910,6 +921,7 @@ impl LLMBuilder {
                         self.top_k,
                         self.tools,
                         self.tool_choice,
+                        self.extra_body,
                         None, // embedding_encoding_format
                         None, // embedding_dimensions
                         None, // reasoning_effort
@@ -946,6 +958,7 @@ impl LLMBuilder {
                         self.reasoning_effort,
                         self.json_schema,
                         None,
+                        self.extra_body,
                         self.enable_parallel_tool_use,
                         self.normalize_response,
                         self.embedding_encoding_format,
@@ -980,6 +993,7 @@ impl LLMBuilder {
                         self.top_k,
                         self.tools,
                         self.tool_choice,
+                        self.extra_body,
                         None, // embedding_encoding_format
                         None, // embedding_dimensions
                         None, // reasoning_effort
@@ -1012,6 +1026,7 @@ impl LLMBuilder {
                         self.top_k,
                         tools,
                         tool_choice,
+                        self.extra_body,
                         self.embedding_encoding_format,
                         self.embedding_dimensions,
                         self.reasoning_effort,

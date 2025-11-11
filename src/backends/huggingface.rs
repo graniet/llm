@@ -45,6 +45,7 @@ impl HuggingFace {
         top_k: Option<u32>,
         tools: Option<Vec<Tool>>,
         tool_choice: Option<ToolChoice>,
+        extra_body: Option<serde_json::Value>,
         _embedding_encoding_format: Option<String>,
         _embedding_dimensions: Option<u32>,
         reasoning_effort: Option<String>,
@@ -67,6 +68,7 @@ impl HuggingFace {
             reasoning_effort,
             json_schema,
             None, // voice
+            extra_body,
             parallel_tool_calls,
             normalize_response,
             None, // embedding_encoding_format

@@ -48,6 +48,7 @@ impl Mistral {
         top_k: Option<u32>,
         tools: Option<Vec<Tool>>,
         tool_choice: Option<ToolChoice>,
+        extra_body: Option<serde_json::Value>,
         embedding_encoding_format: Option<String>,
         embedding_dimensions: Option<u32>,
         reasoning_effort: Option<String>,
@@ -70,6 +71,7 @@ impl Mistral {
             reasoning_effort,
             json_schema,
             None, // voice - not supported by Mistral
+            extra_body,
             parallel_tool_calls,
             normalize_response,
             embedding_encoding_format,
