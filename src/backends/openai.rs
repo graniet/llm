@@ -166,8 +166,8 @@ pub struct OpenAIAPIChatRequest<'a> {
     pub response_format: Option<OpenAIResponseFormat>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<OpenAIStreamOptions>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extra_body: Option<serde_json::Value>,
+    #[serde(flatten)]
+    pub extra_body: serde_json::Map<String, serde_json::Value>,
 }
 
 impl OpenAI {

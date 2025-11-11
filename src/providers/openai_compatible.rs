@@ -40,7 +40,7 @@ pub struct OpenAICompatibleProvider<T: OpenAIProviderConfig> {
     pub reasoning_effort: Option<String>,
     pub json_schema: Option<StructuredOutputFormat>,
     pub voice: Option<String>,
-    pub extra_body: Option<serde_json::Value>,
+    pub extra_body: serde_json::Map<String, serde_json::Value>,
     pub parallel_tool_calls: bool,
     pub embedding_encoding_format: Option<String>,
     pub embedding_dimensions: Option<u32>,
@@ -136,8 +136,8 @@ pub struct OpenAIChatRequest<'a> {
     pub stream_options: Option<OpenAIStreamOptions>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parallel_tool_calls: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extra_body: Option<serde_json::Value>,
+    #[serde(flatten)]
+    pub extra_body: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Generic OpenAI-compatible chat response
@@ -319,6 +319,10 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
         if let Some(sec) = timeout_seconds {
             builder = builder.timeout(std::time::Duration::from_secs(sec));
         }
+        let extra_body = match extra_body {
+            Some(serde_json::Value::Object(map)) => map,
+            _ => serde_json::Map::new(),    // Should we panic here?
+        };
         Self {
             api_key: api_key.into(),
             base_url: Url::parse(&base_url.unwrap_or_else(|| T::DEFAULT_BASE_URL.to_owned()))
