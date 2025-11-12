@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    builder::LLMBackend,
+    builder::{LLMBackend, SystemContent, SystemPrompt},
     chat::{
         ChatMessage, ChatProvider, ChatResponse, ChatRole, MessageType, Tool, ToolChoice, Usage,
     },
@@ -35,7 +35,7 @@ pub struct Anthropic {
     pub max_tokens: u32,
     pub temperature: f32,
     pub timeout_seconds: u64,
-    pub system: String,
+    pub system: SystemPrompt,
     pub top_p: Option<f32>,
     pub top_k: Option<u32>,
     pub tools: Option<Vec<Tool>>,
@@ -62,6 +62,14 @@ struct ThinkingConfig {
     budget_tokens: u32,
 }
 
+/// System prompt in the request - can be either a string or vector of content objects
+#[derive(Serialize, Debug)]
+#[serde(untagged)]
+enum RequestSystemPrompt<'a> {
+    String(&'a str),
+    Messages(&'a [SystemContent]),
+}
+
 /// Request payload for Anthropic's messages API endpoint.
 #[derive(Serialize, Debug)]
 struct AnthropicCompleteRequest<'a> {
@@ -72,7 +80,7 @@ struct AnthropicCompleteRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    system: Option<&'a str>,
+    system: Option<RequestSystemPrompt<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -300,7 +308,7 @@ impl Anthropic {
         max_tokens: Option<u32>,
         temperature: Option<f32>,
         timeout_seconds: Option<u64>,
-        system: Option<String>,
+        system: Option<SystemPrompt>,
         top_p: Option<f32>,
         top_k: Option<u32>,
         tools: Option<Vec<Tool>>,
@@ -317,7 +325,9 @@ impl Anthropic {
             model: model.unwrap_or_else(|| "claude-3-sonnet-20240229".to_string()),
             max_tokens: max_tokens.unwrap_or(300),
             temperature: temperature.unwrap_or(0.7),
-            system: system.unwrap_or_else(|| "You are a helpful assistant.".to_string()),
+            system: system.unwrap_or_else(|| {
+                SystemPrompt::String("You are a helpful assistant.".to_string())
+            }),
             timeout_seconds: timeout_seconds.unwrap_or(30),
             top_p,
             top_k,
@@ -327,6 +337,18 @@ impl Anthropic {
             thinking_budget_tokens,
             client: builder.build().expect("Failed to build reqwest Client"),
         }
+    }
+
+    /// Sets the system prompt using a vector of SystemContent objects
+    pub fn with_system_messages(mut self, messages: Vec<SystemContent>) -> Self {
+        self.system = SystemPrompt::Messages(messages);
+        self
+    }
+
+    /// Sets the system prompt using a string
+    pub fn with_system_string(mut self, system: String) -> Self {
+        self.system = SystemPrompt::String(system);
+        self
     }
 }
 
@@ -492,12 +514,17 @@ impl ChatProvider for Anthropic {
             None
         };
 
+        let system_prompt = match &self.system {
+            SystemPrompt::String(s) => Some(RequestSystemPrompt::String(s)),
+            SystemPrompt::Messages(msgs) => Some(RequestSystemPrompt::Messages(msgs)),
+        };
+
         let req_body = AnthropicCompleteRequest {
             messages: anthropic_messages,
             model: &self.model,
             max_tokens: Some(self.max_tokens),
             temperature: Some(self.temperature),
-            system: Some(&self.system),
+            system: system_prompt,
             stream: Some(false),
             top_p: self.top_p,
             top_k: self.top_k,
@@ -619,12 +646,17 @@ impl ChatProvider for Anthropic {
             })
             .collect();
 
+        let system_prompt = match &self.system {
+            SystemPrompt::String(s) => Some(RequestSystemPrompt::String(s)),
+            SystemPrompt::Messages(msgs) => Some(RequestSystemPrompt::Messages(msgs)),
+        };
+
         let req_body = AnthropicCompleteRequest {
             messages: anthropic_messages,
             model: &self.model,
             max_tokens: Some(self.max_tokens),
             temperature: Some(self.temperature),
-            system: Some(&self.system),
+            system: system_prompt,
             stream: Some(true),
             top_p: self.top_p,
             top_k: self.top_k,
