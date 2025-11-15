@@ -552,20 +552,193 @@ where
 {
     let stream = response
         .bytes_stream()
-        .map(move |chunk| match chunk {
-            Ok(bytes) => {
-                let text = String::from_utf8_lossy(&bytes);
-                parser(&text)
-            }
-            Err(e) => Err(LLMError::HttpError(e.to_string())),
-        })
-        .filter_map(|result| async move {
-            match result {
-                Ok(Some(content)) => Some(Ok(content)),
-                Ok(None) => None,
-                Err(e) => Some(Err(e)),
-            }
-        });
+        .scan(
+            (String::new(), Vec::new()),
+            move |(buffer, utf8_buffer), chunk| {
+                let result = match chunk {
+                    Ok(bytes) => {
+                        utf8_buffer.extend_from_slice(&bytes);
+
+                        match String::from_utf8(utf8_buffer.clone()) {
+                            Ok(text) => {
+                                buffer.push_str(&text);
+                                utf8_buffer.clear();
+                            }
+                            Err(e) => {
+                                let valid_up_to = e.utf8_error().valid_up_to();
+                                if valid_up_to > 0 {
+                                    // Safe to use from_utf8_lossy here since valid_up_to points to
+                                    // a valid UTF-8 boundary - no replacement characters will be introduced
+                                    let valid =
+                                        String::from_utf8_lossy(&utf8_buffer[..valid_up_to]);
+                                    buffer.push_str(&valid);
+                                    utf8_buffer.drain(..valid_up_to);
+                                }
+                            }
+                        }
+
+                        let mut results = Vec::new();
+
+                        while let Some(pos) = buffer.find("\n\n") {
+                            let event = buffer[..pos + 2].to_string();
+                            buffer.drain(..pos + 2);
+
+                            match parser(&event) {
+                                Ok(Some(content)) => results.push(Ok(content)),
+                                Ok(None) => {}
+                                Err(e) => results.push(Err(e)),
+                            }
+                        }
+
+                        Some(results)
+                    }
+                    Err(e) => Some(vec![Err(LLMError::HttpError(e.to_string()))]),
+                };
+
+                async move { result }
+            },
+        )
+        .flat_map(futures::stream::iter);
 
     Box::pin(stream)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use futures::stream::StreamExt;
+
+    #[tokio::test]
+    async fn test_create_sse_stream_handles_split_utf8() {
+        let test_data = "data: Positive reactions\n\n".as_bytes();
+
+        let chunks: Vec<Result<Bytes, reqwest::Error>> = vec![
+            Ok(Bytes::from(&test_data[..10])),
+            Ok(Bytes::from(&test_data[10..])),
+        ];
+
+        let mock_response = create_mock_response(chunks);
+
+        let parser = |event: &str| -> Result<Option<String>, LLMError> {
+            if let Some(content) = event.strip_prefix("data: ") {
+                let content = content.trim();
+                if content.is_empty() {
+                    return Ok(None);
+                }
+                Ok(Some(content.to_string()))
+            } else {
+                Ok(None)
+            }
+        };
+
+        let mut stream = create_sse_stream(mock_response, parser);
+
+        let mut results = Vec::new();
+        while let Some(result) = stream.next().await {
+            results.push(result);
+        }
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].as_ref().unwrap(), "Positive reactions");
+    }
+
+    #[tokio::test]
+    async fn test_create_sse_stream_handles_split_sse_events() {
+        let event1 = "data: First event\n\n";
+        let event2 = "data: Second event\n\n";
+        let combined = format!("{}{}", event1, event2);
+        let test_data = combined.as_bytes().to_vec();
+
+        let split_point = event1.len() + 5;
+        let chunks: Vec<Result<Bytes, reqwest::Error>> = vec![
+            Ok(Bytes::from(test_data[..split_point].to_vec())),
+            Ok(Bytes::from(test_data[split_point..].to_vec())),
+        ];
+
+        let mock_response = create_mock_response(chunks);
+
+        let parser = |event: &str| -> Result<Option<String>, LLMError> {
+            if let Some(content) = event.strip_prefix("data: ") {
+                let content = content.trim();
+                if content.is_empty() {
+                    return Ok(None);
+                }
+                Ok(Some(content.to_string()))
+            } else {
+                Ok(None)
+            }
+        };
+
+        let mut stream = create_sse_stream(mock_response, parser);
+
+        let mut results = Vec::new();
+        while let Some(result) = stream.next().await {
+            results.push(result);
+        }
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].as_ref().unwrap(), "First event");
+        assert_eq!(results[1].as_ref().unwrap(), "Second event");
+    }
+
+    #[tokio::test]
+    async fn test_create_sse_stream_handles_multibyte_utf8_split() {
+        let multibyte_char = "✨";
+        let event = format!("data: Star {}\n\n", multibyte_char);
+        let test_data = event.as_bytes().to_vec();
+
+        let emoji_start = event.find(multibyte_char).unwrap();
+        let split_in_emoji = emoji_start + 1;
+
+        let chunks: Vec<Result<Bytes, reqwest::Error>> = vec![
+            Ok(Bytes::from(test_data[..split_in_emoji].to_vec())),
+            Ok(Bytes::from(test_data[split_in_emoji..].to_vec())),
+        ];
+
+        let mock_response = create_mock_response(chunks);
+
+        let parser = |event: &str| -> Result<Option<String>, LLMError> {
+            if let Some(content) = event.strip_prefix("data: ") {
+                let content = content.trim();
+                if content.is_empty() {
+                    return Ok(None);
+                }
+                Ok(Some(content.to_string()))
+            } else {
+                Ok(None)
+            }
+        };
+
+        let mut stream = create_sse_stream(mock_response, parser);
+
+        let mut results = Vec::new();
+        while let Some(result) = stream.next().await {
+            results.push(result);
+        }
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].as_ref().unwrap(),
+            &format!("Star {}", multibyte_char)
+        );
+    }
+
+    fn create_mock_response(chunks: Vec<Result<Bytes, reqwest::Error>>) -> reqwest::Response {
+        use http_body_util::StreamBody;
+        use reqwest::Body;
+
+        let frame_stream = futures::stream::iter(
+            chunks
+                .into_iter()
+                .map(|chunk| chunk.map(|bytes| hyper::body::Frame::data(bytes))),
+        );
+
+        let body = StreamBody::new(frame_stream);
+        let body = Body::wrap(body);
+
+        let http_response = http::Response::builder().status(200).body(body).unwrap();
+
+        http_response.into()
+    }
 }
