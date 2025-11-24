@@ -718,6 +718,7 @@ impl LLMBuilder {
                     })?;
                     let anthro = crate::backends::anthropic::Anthropic::new(
                         api_key,
+                        self.base_url,
                         self.model,
                         self.max_tokens,
                         self.temperature,

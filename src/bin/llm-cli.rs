@@ -113,6 +113,26 @@ fn get_provider_info(args: &CliArgs) -> Option<(String, Option<String>)> {
         .map(|provider| (provider, args.model.clone()))
 }
 
+/// Retrieves the base URL for the API from command line arguments or secret store
+/// 
+/// # Arguments
+/// 
+/// * `args` - Command line arguments that may contain a base URL
+/// 
+/// # Returns
+/// 
+/// * `Some(String)` - The base URL if found
+/// * `None` - If no base URL could be found
+fn get_base_url(args: &CliArgs) -> Option<String> {
+    args.base_url.clone().or_else(|| {
+        let store = SecretStore::new().ok()?;
+        store
+            .get("BASE_URL")
+            .cloned()
+            .or_else(|| std::env::var("LLM_BASE_URL").ok())
+    })
+}
+
 /// Retrieves the appropriate API key for the specified backend
 ///
 /// # Arguments
@@ -303,7 +323,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         builder = builder.api_key(key);
     }
 
-    if let Some(url) = args.base_url.clone() {
+    if let Some(url) = get_base_url(&args) {
         builder = builder.base_url(url);
     }
 

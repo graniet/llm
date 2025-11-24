@@ -31,6 +31,7 @@ use serde_json::Value;
 #[derive(Debug)]
 pub struct Anthropic {
     pub api_key: String,
+    pub base_url: String,
     pub model: String,
     pub max_tokens: u32,
     pub temperature: f32,
@@ -296,6 +297,7 @@ impl Anthropic {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         api_key: impl Into<String>,
+        base_url: Option<String>,
         model: Option<String>,
         max_tokens: Option<u32>,
         temperature: Option<f32>,
@@ -314,6 +316,7 @@ impl Anthropic {
         }
         Self {
             api_key: api_key.into(),
+            base_url: base_url.map(|u| u.trim_end_matches('/').to_string()).unwrap_or_else(|| "https://api.anthropic.com".to_string()),
             model: model.unwrap_or_else(|| "claude-3-sonnet-20240229".to_string()),
             max_tokens: max_tokens.unwrap_or(300),
             temperature: temperature.unwrap_or(0.7),
@@ -508,7 +511,7 @@ impl ChatProvider for Anthropic {
 
         let mut request = self
             .client
-            .post("https://api.anthropic.com/v1/messages")
+            .post(&format!("{}/v1/messages", &self.base_url))
             .header("x-api-key", &self.api_key)
             .header("Content-Type", "application/json")
             .header("anthropic-version", "2023-06-01")
