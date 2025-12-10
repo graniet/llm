@@ -73,6 +73,7 @@ impl OpenRouter {
             normalize_response,
             None, // embedding_encoding_format - not supported by OpenRouter
             None, // embedding_dimensions - not supported by OpenRouter
+            None, // extra_headers - not exposed via OpenRouter wrapper
         )
     }
 }

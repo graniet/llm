@@ -87,6 +87,7 @@ impl Groq {
             normalize_response,
             None, // embedding_encoding_format - not supported by Groq
             None, // embedding_dimensions - not supported by Groq
+            None, // extra_headers - not exposed via Groq wrapper
         )
     }
 }

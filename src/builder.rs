@@ -198,6 +198,8 @@ pub struct LLMBuilder {
     resilient_max_delay_ms: Option<u64>,
     /// Resilience: jitter toggle
     resilient_jitter: Option<bool>,
+    /// Extra HTTP headers to include in all requests
+    extra_headers: Option<std::collections::HashMap<String, String>>,
 }
 
 impl LLMBuilder {
@@ -400,6 +402,28 @@ impl LLMBuilder {
     pub fn extra_body(mut self, extra_body: impl serde::Serialize) -> Self {
         let value = serde_json::to_value(extra_body).ok();
         self.extra_body = value;
+        self
+    }
+
+    /// Set extra HTTP headers to include in all requests.
+    ///
+    /// Useful for custom authentication (e.g., Cloudflare Access tokens).
+    ///
+    /// # Example
+    /// ```
+    /// use std::collections::HashMap;
+    /// use llm::builder::LLMBuilder;
+    ///
+    /// let headers = HashMap::from([
+    ///     ("CF-Access-Client-Id".to_string(), "my-client-id".to_string()),
+    ///     ("CF-Access-Client-Secret".to_string(), "my-secret".to_string()),
+    /// ]);
+    ///
+    /// let builder = LLMBuilder::new()
+    ///     .extra_headers(headers);
+    /// ```
+    pub fn extra_headers(mut self, headers: std::collections::HashMap<String, String>) -> Self {
+        self.extra_headers = Some(headers);
         self
     }
 
@@ -683,6 +707,7 @@ impl LLMBuilder {
                         self.openai_web_search_user_location_approximate_country,
                         self.openai_web_search_user_location_approximate_city,
                         self.openai_web_search_user_location_approximate_region,
+                        self.extra_headers,
                     )?)
                 }
             }
@@ -963,6 +988,7 @@ impl LLMBuilder {
                         self.normalize_response,
                         self.embedding_encoding_format,
                         self.embedding_dimensions,
+                        self.extra_headers,
                     );
                     Box::new(cohere)
                 }
