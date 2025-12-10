@@ -33,7 +33,7 @@ use async_trait::async_trait;
 // Deterministic jitter only; no RNG
 use tokio::time::sleep;
 
-use crate::chat::{ChatMessage, ChatProvider, ChatResponse, Tool};
+use crate::chat::{ChatMessage, ChatProvider, ChatResponse, StreamChunk, StreamResponse, Tool};
 use crate::completion::{CompletionProvider, CompletionRequest, CompletionResponse};
 use crate::embedding::EmbeddingProvider;
 use crate::error::LLMError;
@@ -157,6 +157,71 @@ impl ChatProvider for ResilientLLM {
         let mut last_err: Option<LLMError> = None;
         while attempts_left > 0 {
             match self.inner.chat_stream(messages).await {
+                Ok(v) => return Ok(v),
+                Err(e) => {
+                    if attempts_left == 1 || !Self::is_retryable(&e) {
+                        return Err(e);
+                    }
+                    last_err = Some(e);
+                    self.backoff_sleep(idx).await;
+                    attempts_left -= 1;
+                    idx += 1;
+                }
+            }
+        }
+        Err(LLMError::RetryExceeded {
+            attempts: self.cfg.max_attempts,
+            last_error: last_err.map(|e| e.to_string()).unwrap_or_default(),
+        })
+    }
+
+    async fn chat_stream_struct(
+        &self,
+        messages: &[ChatMessage],
+    ) -> Result<
+        std::pin::Pin<
+            Box<dyn futures::stream::Stream<Item = Result<StreamResponse, LLMError>> + Send>,
+        >,
+        LLMError,
+    > {
+        let mut attempts_left = self.cfg.max_attempts;
+        let mut idx = 0usize;
+        let mut last_err: Option<LLMError> = None;
+        while attempts_left > 0 {
+            match self.inner.chat_stream_struct(messages).await {
+                Ok(v) => return Ok(v),
+                Err(e) => {
+                    if attempts_left == 1 || !Self::is_retryable(&e) {
+                        return Err(e);
+                    }
+                    last_err = Some(e);
+                    self.backoff_sleep(idx).await;
+                    attempts_left -= 1;
+                    idx += 1;
+                }
+            }
+        }
+        Err(LLMError::RetryExceeded {
+            attempts: self.cfg.max_attempts,
+            last_error: last_err.map(|e| e.to_string()).unwrap_or_default(),
+        })
+    }
+
+    async fn chat_stream_with_tools(
+        &self,
+        messages: &[ChatMessage],
+        tools: Option<&[Tool]>,
+    ) -> Result<
+        std::pin::Pin<
+            Box<dyn futures::stream::Stream<Item = Result<StreamChunk, LLMError>> + Send>,
+        >,
+        LLMError,
+    > {
+        let mut attempts_left = self.cfg.max_attempts;
+        let mut idx = 0usize;
+        let mut last_err: Option<LLMError> = None;
+        while attempts_left > 0 {
+            match self.inner.chat_stream_with_tools(messages, tools).await {
                 Ok(v) => return Ok(v),
                 Err(e) => {
                     if attempts_left == 1 || !Self::is_retryable(&e) {
