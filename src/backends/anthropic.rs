@@ -307,77 +307,12 @@ impl ChatResponse for AnthropicCompleteResponse {
 }
 
 impl Anthropic {
-    /// Creates a new Anthropic client with the specified configuration.
+    /// Converts a slice of ChatMessage into Anthropic's message format.
     ///
-    /// # Arguments
-    ///
-    /// * `api_key` - Anthropic API key for authentication
-    /// * `model` - Model identifier (defaults to "claude-3-sonnet-20240229")
-    /// * `max_tokens` - Maximum tokens in response (defaults to 300)
-    /// * `temperature` - Sampling temperature (defaults to 0.7)
-    /// * `timeout_seconds` - Request timeout in seconds (defaults to 30)
-    /// * `system` - System prompt (defaults to "You are a helpful assistant.")
-    /// *
-    /// * `thinking_budget_tokens` - Budget tokens for thinking (optional)
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        api_key: impl Into<String>,
-        model: Option<String>,
-        max_tokens: Option<u32>,
-        temperature: Option<f32>,
-        timeout_seconds: Option<u64>,
-        system: Option<String>,
-        top_p: Option<f32>,
-        top_k: Option<u32>,
-        tools: Option<Vec<Tool>>,
-        tool_choice: Option<ToolChoice>,
-        reasoning: Option<bool>,
-        thinking_budget_tokens: Option<u32>,
-    ) -> Self {
-        let mut builder = Client::builder();
-        if let Some(sec) = timeout_seconds {
-            builder = builder.timeout(std::time::Duration::from_secs(sec));
-        }
-        Self {
-            api_key: api_key.into(),
-            model: model.unwrap_or_else(|| "claude-3-sonnet-20240229".to_string()),
-            max_tokens: max_tokens.unwrap_or(300),
-            temperature: temperature.unwrap_or(0.7),
-            system: system.unwrap_or_else(|| "You are a helpful assistant.".to_string()),
-            timeout_seconds: timeout_seconds.unwrap_or(30),
-            top_p,
-            top_k,
-            tools,
-            tool_choice,
-            reasoning: reasoning.unwrap_or(false),
-            thinking_budget_tokens,
-            client: builder.build().expect("Failed to build reqwest Client"),
-        }
-    }
-}
-
-#[async_trait]
-impl ChatProvider for Anthropic {
-    /// Sends a chat request to Anthropic's API.
-    ///
-    /// # Arguments
-    ///
-    /// * `messages` - Slice of chat messages representing the conversation
-    /// * `tools` - Optional slice of tools to use in the chat
-    ///
-    /// # Returns
-    ///
-    /// The model's response text or an error
-    async fn chat_with_tools(
-        &self,
-        messages: &[ChatMessage],
-        tools: Option<&[Tool]>,
-    ) -> Result<Box<dyn ChatResponse>, LLMError> {
-        if self.api_key.is_empty() {
-            return Err(LLMError::AuthError("Missing Anthropic API key".to_string()));
-        }
-
-        let anthropic_messages: Vec<AnthropicMessage> = messages
+    /// This helper method handles all message types including text, images, PDFs,
+    /// tool use, and tool results.
+    fn convert_messages_to_anthropic<'a>(messages: &'a [ChatMessage]) -> Vec<AnthropicMessage<'a>> {
+        messages
             .iter()
             .map(|m| AnthropicMessage {
                 role: match m.role {
@@ -474,9 +409,21 @@ impl ChatProvider for Anthropic {
                         .collect(),
                 },
             })
-            .collect();
+            .collect()
+    }
 
-        let maybe_tool_slice: Option<&[Tool]> = tools.or(self.tools.as_deref());
+    /// Prepares Anthropic tools and tool_choice from the provided tools and instance configuration.
+    ///
+    /// Returns a tuple of (anthropic_tools, final_tool_choice) ready for the API request.
+    fn prepare_tools_and_choice<'a>(
+        tools: Option<&'a [Tool]>,
+        instance_tools: Option<&'a [Tool]>,
+        tool_choice: &Option<ToolChoice>,
+    ) -> (
+        Option<Vec<AnthropicTool<'a>>>,
+        Option<HashMap<String, String>>,
+    ) {
+        let maybe_tool_slice: Option<&[Tool]> = tools.or(instance_tools);
         let anthropic_tools = maybe_tool_slice.map(|slice| {
             slice
                 .iter()
@@ -488,7 +435,7 @@ impl ChatProvider for Anthropic {
                 .collect::<Vec<_>>()
         });
 
-        let tool_choice = match self.tool_choice {
+        let tool_choice_map = match tool_choice {
             Some(ToolChoice::Auto) => {
                 Some(HashMap::from([("type".to_string(), "auto".to_string())]))
             }
@@ -504,10 +451,87 @@ impl ChatProvider for Anthropic {
         };
 
         let final_tool_choice = if anthropic_tools.is_some() {
-            tool_choice.clone()
+            tool_choice_map
         } else {
             None
         };
+
+        (anthropic_tools, final_tool_choice)
+    }
+
+    /// Creates a new Anthropic client with the specified configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `api_key` - Anthropic API key for authentication
+    /// * `model` - Model identifier (defaults to "claude-3-sonnet-20240229")
+    /// * `max_tokens` - Maximum tokens in response (defaults to 300)
+    /// * `temperature` - Sampling temperature (defaults to 0.7)
+    /// * `timeout_seconds` - Request timeout in seconds (defaults to 30)
+    /// * `system` - System prompt (defaults to "You are a helpful assistant.")
+    /// *
+    /// * `thinking_budget_tokens` - Budget tokens for thinking (optional)
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        api_key: impl Into<String>,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<String>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+        tools: Option<Vec<Tool>>,
+        tool_choice: Option<ToolChoice>,
+        reasoning: Option<bool>,
+        thinking_budget_tokens: Option<u32>,
+    ) -> Self {
+        let mut builder = Client::builder();
+        if let Some(sec) = timeout_seconds {
+            builder = builder.timeout(std::time::Duration::from_secs(sec));
+        }
+        Self {
+            api_key: api_key.into(),
+            model: model.unwrap_or_else(|| "claude-3-sonnet-20240229".to_string()),
+            max_tokens: max_tokens.unwrap_or(300),
+            temperature: temperature.unwrap_or(0.7),
+            system: system.unwrap_or_else(|| "You are a helpful assistant.".to_string()),
+            timeout_seconds: timeout_seconds.unwrap_or(30),
+            top_p,
+            top_k,
+            tools,
+            tool_choice,
+            reasoning: reasoning.unwrap_or(false),
+            thinking_budget_tokens,
+            client: builder.build().expect("Failed to build reqwest Client"),
+        }
+    }
+}
+
+#[async_trait]
+impl ChatProvider for Anthropic {
+    /// Sends a chat request to Anthropic's API.
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - Slice of chat messages representing the conversation
+    /// * `tools` - Optional slice of tools to use in the chat
+    ///
+    /// # Returns
+    ///
+    /// The model's response text or an error
+    async fn chat_with_tools(
+        &self,
+        messages: &[ChatMessage],
+        tools: Option<&[Tool]>,
+    ) -> Result<Box<dyn ChatResponse>, LLMError> {
+        if self.api_key.is_empty() {
+            return Err(LLMError::AuthError("Missing Anthropic API key".to_string()));
+        }
+
+        let anthropic_messages = Self::convert_messages_to_anthropic(messages);
+        let (anthropic_tools, final_tool_choice) =
+            Self::prepare_tools_and_choice(tools, self.tools.as_deref(), &self.tool_choice);
 
         let thinking = if self.reasoning {
             Some(ThinkingConfig {
@@ -706,137 +730,9 @@ impl ChatProvider for Anthropic {
             return Err(LLMError::AuthError("Missing Anthropic API key".to_string()));
         }
 
-        let anthropic_messages: Vec<AnthropicMessage> = messages
-            .iter()
-            .map(|m| AnthropicMessage {
-                role: match m.role {
-                    ChatRole::User => "user",
-                    ChatRole::Assistant => "assistant",
-                },
-                content: match &m.message_type {
-                    MessageType::Text => vec![MessageContent {
-                        message_type: Some("text"),
-                        text: Some(&m.content),
-                        image_url: None,
-                        source: None,
-                        tool_use_id: None,
-                        tool_input: None,
-                        tool_name: None,
-                        tool_result_id: None,
-                        tool_output: None,
-                    }],
-                    MessageType::Pdf(raw_bytes) => {
-                        vec![MessageContent {
-                            message_type: Some("document"),
-                            text: None,
-                            image_url: None,
-                            source: Some(ImageSource {
-                                source_type: "base64",
-                                media_type: "application/pdf",
-                                data: BASE64.encode(raw_bytes),
-                            }),
-                            tool_use_id: None,
-                            tool_input: None,
-                            tool_name: None,
-                            tool_result_id: None,
-                            tool_output: None,
-                        }]
-                    }
-                    MessageType::Image((image_mime, raw_bytes)) => {
-                        vec![MessageContent {
-                            message_type: Some("image"),
-                            text: None,
-                            image_url: None,
-                            source: Some(ImageSource {
-                                source_type: "base64",
-                                media_type: image_mime.mime_type(),
-                                data: BASE64.encode(raw_bytes),
-                            }),
-                            tool_use_id: None,
-                            tool_input: None,
-                            tool_name: None,
-                            tool_result_id: None,
-                            tool_output: None,
-                        }]
-                    }
-                    MessageType::ImageURL(ref url) => vec![MessageContent {
-                        message_type: Some("image_url"),
-                        text: None,
-                        image_url: Some(ImageUrlContent { url }),
-                        source: None,
-                        tool_use_id: None,
-                        tool_input: None,
-                        tool_name: None,
-                        tool_result_id: None,
-                        tool_output: None,
-                    }],
-                    MessageType::ToolUse(calls) => calls
-                        .iter()
-                        .map(|c| MessageContent {
-                            message_type: Some("tool_use"),
-                            text: None,
-                            image_url: None,
-                            source: None,
-                            tool_use_id: Some(c.id.clone()),
-                            tool_input: Some(
-                                serde_json::from_str(&c.function.arguments)
-                                    .unwrap_or(c.function.arguments.clone().into()),
-                            ),
-                            tool_name: Some(c.function.name.clone()),
-                            tool_result_id: None,
-                            tool_output: None,
-                        })
-                        .collect(),
-                    MessageType::ToolResult(responses) => responses
-                        .iter()
-                        .map(|r| MessageContent {
-                            message_type: Some("tool_result"),
-                            text: None,
-                            image_url: None,
-                            source: None,
-                            tool_use_id: None,
-                            tool_input: None,
-                            tool_name: None,
-                            tool_result_id: Some(r.id.clone()),
-                            tool_output: Some(r.function.arguments.clone()),
-                        })
-                        .collect(),
-                },
-            })
-            .collect();
-
-        let maybe_tool_slice: Option<&[Tool]> = tools.or(self.tools.as_deref());
-        let anthropic_tools = maybe_tool_slice.map(|slice| {
-            slice
-                .iter()
-                .map(|tool| AnthropicTool {
-                    name: &tool.function.name,
-                    description: &tool.function.description,
-                    schema: &tool.function.parameters,
-                })
-                .collect::<Vec<_>>()
-        });
-
-        let tool_choice = match self.tool_choice {
-            Some(ToolChoice::Auto) => {
-                Some(HashMap::from([("type".to_string(), "auto".to_string())]))
-            }
-            Some(ToolChoice::Any) => Some(HashMap::from([("type".to_string(), "any".to_string())])),
-            Some(ToolChoice::Tool(ref tool_name)) => Some(HashMap::from([
-                ("type".to_string(), "tool".to_string()),
-                ("name".to_string(), tool_name.clone()),
-            ])),
-            Some(ToolChoice::None) => {
-                Some(HashMap::from([("type".to_string(), "none".to_string())]))
-            }
-            None => None,
-        };
-
-        let final_tool_choice = if anthropic_tools.is_some() {
-            tool_choice.clone()
-        } else {
-            None
-        };
+        let anthropic_messages = Self::convert_messages_to_anthropic(messages);
+        let (anthropic_tools, final_tool_choice) =
+            Self::prepare_tools_and_choice(tools, self.tools.as_deref(), &self.tool_choice);
 
         let req_body = AnthropicCompleteRequest {
             messages: anthropic_messages,
