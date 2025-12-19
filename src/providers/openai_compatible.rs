@@ -865,6 +865,11 @@ fn parse_openai_sse_chunk_with_tools(
                             }
                         }
 
+                        // Emit Usage before Done if present
+                        if let Some(ref usage) = chunk.usage {
+                            results.push(ChatStreamChunk::Usage(usage.clone()));
+                        }
+
                         let stop_reason = match finish_reason.as_str() {
                             "tool_calls" => "tool_use",
                             "stop" => "end_turn",
@@ -873,6 +878,14 @@ fn parse_openai_sse_chunk_with_tools(
                         results.push(ChatStreamChunk::Done {
                             stop_reason: stop_reason.to_string(),
                         });
+                    }
+                }
+
+                // Handle usage in final chunk (may have empty choices)
+                // This handles the case where OpenAI sends usage in a separate final chunk
+                if chunk.choices.is_empty() {
+                    if let Some(ref usage) = chunk.usage {
+                        results.push(ChatStreamChunk::Usage(usage.clone()));
                     }
                 }
             }
@@ -886,6 +899,8 @@ fn parse_openai_sse_chunk_with_tools(
 #[derive(Debug, Deserialize)]
 struct OpenAIToolStreamChunk {
     choices: Vec<OpenAIToolStreamChoice>,
+    /// Usage information (present in final chunk when stream_options.include_usage is true)
+    usage: Option<Usage>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1416,5 +1431,70 @@ mod tests {
             "Expected ToolUseComplete, got {:?}",
             results[0]
         );
+    }
+
+    #[test]
+    fn test_parse_openai_stream_with_usage() {
+        // Test usage in final chunk with finish_reason
+        let event = r#"data: {"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30}}"#;
+        let mut tool_states = HashMap::new();
+        let results = parse_openai_sse_chunk_with_tools(event, &mut tool_states).unwrap();
+
+        // Should have Usage then Done
+        assert_eq!(results.len(), 2);
+
+        match &results[0] {
+            ChatStreamChunk::Usage(usage) => {
+                assert_eq!(usage.prompt_tokens, 10);
+                assert_eq!(usage.completion_tokens, 20);
+                assert_eq!(usage.total_tokens, 30);
+            }
+            _ => panic!("Expected Usage chunk first, got {:?}", results[0]),
+        }
+
+        match &results[1] {
+            ChatStreamChunk::Done { stop_reason } => {
+                assert_eq!(stop_reason, "end_turn");
+            }
+            _ => panic!("Expected Done chunk second, got {:?}", results[1]),
+        }
+    }
+
+    #[test]
+    fn test_parse_openai_stream_usage_separate_chunk() {
+        // OpenAI sometimes sends usage in a separate chunk with empty choices
+        let event = r#"data: {"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":25,"completion_tokens":100,"total_tokens":125}}"#;
+        let mut tool_states = HashMap::new();
+        let results = parse_openai_sse_chunk_with_tools(event, &mut tool_states).unwrap();
+
+        assert_eq!(results.len(), 1);
+        match &results[0] {
+            ChatStreamChunk::Usage(usage) => {
+                assert_eq!(usage.prompt_tokens, 25);
+                assert_eq!(usage.completion_tokens, 100);
+                assert_eq!(usage.total_tokens, 125);
+            }
+            _ => panic!("Expected Usage chunk, got {:?}", results[0]),
+        }
+    }
+
+    #[test]
+    fn test_parse_openai_stream_usage_with_details() {
+        // Test usage with prompt_tokens_details (cached_tokens)
+        let event = r#"data: {"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150,"prompt_tokens_details":{"cached_tokens":80}}}"#;
+        let mut tool_states = HashMap::new();
+        let results = parse_openai_sse_chunk_with_tools(event, &mut tool_states).unwrap();
+
+        assert_eq!(results.len(), 2);
+        match &results[0] {
+            ChatStreamChunk::Usage(usage) => {
+                assert_eq!(usage.prompt_tokens, 100);
+                assert_eq!(usage.completion_tokens, 50);
+                assert!(usage.prompt_tokens_details.is_some());
+                let details = usage.prompt_tokens_details.as_ref().unwrap();
+                assert_eq!(details.cached_tokens, Some(80));
+            }
+            _ => panic!("Expected Usage chunk, got {:?}", results[0]),
+        }
     }
 }

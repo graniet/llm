@@ -103,6 +103,9 @@ pub enum StreamChunk {
         /// The reason the stream stopped (e.g., "end_turn", "tool_use")
         stop_reason: String,
     },
+
+    /// Token usage information (emitted before Done)
+    Usage(Usage),
 }
 
 /// Breakdown of completion tokens.
