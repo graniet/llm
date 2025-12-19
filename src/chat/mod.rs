@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
+use std::pin::Pin;
 
 use async_trait::async_trait;
 use futures::stream::{Stream, StreamExt};
@@ -59,6 +60,49 @@ pub struct StreamDelta {
     /// The incremental tool calls, if any
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
+}
+
+/// A streaming chunk that can be either text or a tool call event.
+///
+/// This enum provides a unified representation of streaming events
+/// when using `chat_stream_with_tools`. It allows callers to receive
+/// text deltas as they arrive while also handling tool use blocks.
+#[derive(Debug, Clone)]
+pub enum StreamChunk {
+    /// Text content delta
+    Text(String),
+
+    /// Tool use block started (contains tool id and name)
+    ToolUseStart {
+        /// The index of this content block in the response
+        index: usize,
+        /// The unique ID for this tool use
+        id: String,
+        /// The name of the tool being called
+        name: String,
+    },
+
+    /// Tool use input JSON delta (partial JSON string)
+    ToolUseInputDelta {
+        /// The index of this content block
+        index: usize,
+        /// Partial JSON string for the tool input
+        partial_json: String,
+    },
+
+    /// Tool use block complete with assembled ToolCall
+    ToolUseComplete {
+        /// The index of this content block
+        index: usize,
+        /// The complete tool call with id, name, and parsed arguments
+        tool_call: ToolCall,
+    },
+
+    /// Stream ended with stop reason
+    Done {
+        /// The reason the stream stopped (e.g., "end_turn", "tool_use")
+        stop_reason: String,
+    },
 }
 
 /// Breakdown of completion tokens.
@@ -416,6 +460,59 @@ pub trait ChatProvider: Sync + Send {
     > {
         Err(LLMError::Generic(
             "Structured streaming not supported for this provider".to_string(),
+        ))
+    }
+
+    /// Sends a streaming chat request with tool support.
+    ///
+    /// Returns a stream of `StreamChunk` which can be text deltas or tool call events.
+    /// When `stop_reason` is "tool_use", the caller should execute the tool(s)
+    /// and continue the conversation.
+    ///
+    /// This method is ideal for agentic workflows where you want to stream text
+    /// output to the user while still receiving tool call requests.
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - The conversation history as a slice of chat messages
+    /// * `tools` - Optional slice of tools available for the model to use
+    ///
+    /// # Returns
+    ///
+    /// A stream of `StreamChunk` items or an error
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use futures::StreamExt;
+    ///
+    /// let mut stream = client
+    ///     .chat_stream_with_tools(&messages, Some(&tools))
+    ///     .await?;
+    ///
+    /// let mut tool_calls = Vec::new();
+    /// while let Some(chunk) = stream.next().await {
+    ///     match chunk? {
+    ///         StreamChunk::Text(text) => print!("{}", text),
+    ///         StreamChunk::ToolUseComplete { tool_call, .. } => {
+    ///             tool_calls.push(tool_call);
+    ///         }
+    ///         StreamChunk::Done { stop_reason } => {
+    ///             if stop_reason == "tool_use" {
+    ///                 // Execute tool_calls and continue conversation
+    ///             }
+    ///         }
+    ///         _ => {}
+    ///     }
+    /// }
+    /// ```
+    async fn chat_stream_with_tools(
+        &self,
+        _messages: &[ChatMessage],
+        _tools: Option<&[Tool]>,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk, LLMError>> + Send>>, LLMError> {
+        Err(LLMError::Generic(
+            "Streaming with tools not supported for this provider".to_string(),
         ))
     }
 

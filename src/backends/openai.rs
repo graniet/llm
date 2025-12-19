@@ -10,8 +10,8 @@ use crate::providers::openai_compatible::{
 };
 use crate::{
     chat::{
-        ChatMessage, ChatProvider, ChatResponse, StreamResponse, StructuredOutputFormat, Tool,
-        ToolChoice,
+        ChatMessage, ChatProvider, ChatResponse, StreamChunk, StreamResponse,
+        StructuredOutputFormat, Tool, ToolChoice,
     },
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
@@ -491,6 +491,16 @@ impl ChatProvider for OpenAI {
             response,
             self.provider.normalize_response,
         ))
+    }
+
+    async fn chat_stream_with_tools(
+        &self,
+        messages: &[ChatMessage],
+        tools: Option<&[Tool]>,
+    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Result<StreamChunk, LLMError>> + Send>>, LLMError>
+    {
+        // Delegate to the inner OpenAICompatibleProvider which has the full implementation
+        self.provider.chat_stream_with_tools(messages, tools).await
     }
 }
 

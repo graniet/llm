@@ -980,3 +980,282 @@ async fn test_list_models(#[case] config: &BackendTestConfig) {
         Err(e) => panic!("List models error for {}: {e}", config.backend_name),
     }
 }
+
+#[tokio::test]
+async fn test_anthropic_chat_stream_with_tools() {
+    let api_key = match std::env::var("ANTHROPIC_API_KEY") {
+        Ok(key) => key,
+        Err(_) => {
+            eprintln!(
+                "test test_anthropic_chat_stream_with_tools ... ignored, ANTHROPIC_API_KEY not set"
+            );
+            return;
+        }
+    };
+
+    use llm::chat::StreamChunk;
+
+    let llm = LLMBuilder::new()
+        .backend(LLMBackend::Anthropic)
+        .api_key(api_key)
+        .model("claude-3-5-haiku-20241022")
+        .max_tokens(512)
+        .temperature(0.0) // Deterministic for testing
+        .function(
+            FunctionBuilder::new("get_weather")
+                .description("Get the current weather in a given location")
+                .param(
+                    ParamBuilder::new("location")
+                        .type_of("string")
+                        .description("The city to get weather for"),
+                )
+                .required(vec!["location".to_string()]),
+        )
+        .build()
+        .expect("Failed to build LLM");
+
+    let messages = vec![ChatMessage::user()
+        .content("What's the weather in Tokyo? Use the get_weather tool to find out.")
+        .build()];
+
+    match llm.chat_stream_with_tools(&messages, llm.tools()).await {
+        Ok(mut stream) => {
+            let mut text_chunks = Vec::new();
+            let mut tool_starts = Vec::new();
+            let mut tool_completes = Vec::new();
+            let mut stop_reason = None;
+
+            while let Some(chunk_result) = stream.next().await {
+                match chunk_result {
+                    Ok(chunk) => {
+                        println!("Stream chunk: {:?}", chunk);
+                        match chunk {
+                            StreamChunk::Text(t) => text_chunks.push(t),
+                            StreamChunk::ToolUseStart { id, name, .. } => {
+                                tool_starts.push((id, name));
+                            }
+                            StreamChunk::ToolUseComplete { tool_call, .. } => {
+                                tool_completes.push(tool_call);
+                            }
+                            StreamChunk::Done { stop_reason: sr } => {
+                                stop_reason = Some(sr);
+                            }
+                            StreamChunk::ToolUseInputDelta { .. } => {
+                                // These are intermediate chunks, we don't need to collect them
+                            }
+                        }
+                    }
+                    Err(e) => panic!("Stream error: {e}"),
+                }
+            }
+
+            // Verify we got a tool call
+            assert!(
+                !tool_completes.is_empty(),
+                "Expected at least one tool call, got none"
+            );
+            assert_eq!(
+                tool_completes[0].function.name, "get_weather",
+                "Expected get_weather tool call"
+            );
+
+            // Verify stop reason is tool_use
+            assert_eq!(
+                stop_reason,
+                Some("tool_use".to_string()),
+                "Expected stop_reason to be 'tool_use'"
+            );
+
+            // Verify the tool input contains location
+            let args: serde_json::Value =
+                serde_json::from_str(&tool_completes[0].function.arguments)
+                    .expect("Failed to parse tool arguments as JSON");
+            assert!(
+                args.get("location").is_some(),
+                "Expected 'location' in tool arguments"
+            );
+            println!(
+                "Tool call arguments: {}",
+                tool_completes[0].function.arguments
+            );
+        }
+        Err(e) => panic!("Stream error: {e}"),
+    }
+}
+
+#[tokio::test]
+async fn test_anthropic_chat_stream_with_tools_text_only() {
+    // Test that when tools are available but not needed, we still get text
+    let api_key = match std::env::var("ANTHROPIC_API_KEY") {
+        Ok(key) => key,
+        Err(_) => {
+            eprintln!("test test_anthropic_chat_stream_with_tools_text_only ... ignored, ANTHROPIC_API_KEY not set");
+            return;
+        }
+    };
+
+    use llm::chat::StreamChunk;
+
+    let llm = LLMBuilder::new()
+        .backend(LLMBackend::Anthropic)
+        .api_key(api_key)
+        .model("claude-3-5-haiku-20241022")
+        .max_tokens(512)
+        .temperature(0.0)
+        .function(
+            FunctionBuilder::new("get_weather")
+                .description("Get the current weather in a given location")
+                .param(
+                    ParamBuilder::new("location")
+                        .type_of("string")
+                        .description("The city to get weather for"),
+                )
+                .required(vec!["location".to_string()]),
+        )
+        .build()
+        .expect("Failed to build LLM");
+
+    let messages = vec![ChatMessage::user()
+        .content("Say hello in exactly 3 words.")
+        .build()];
+
+    match llm.chat_stream_with_tools(&messages, llm.tools()).await {
+        Ok(mut stream) => {
+            let mut text_chunks = Vec::new();
+            let mut tool_completes = Vec::new();
+            let mut stop_reason = None;
+
+            while let Some(chunk_result) = stream.next().await {
+                match chunk_result {
+                    Ok(chunk) => match chunk {
+                        StreamChunk::Text(t) => text_chunks.push(t),
+                        StreamChunk::ToolUseComplete { tool_call, .. } => {
+                            tool_completes.push(tool_call);
+                        }
+                        StreamChunk::Done { stop_reason: sr } => {
+                            stop_reason = Some(sr);
+                        }
+                        _ => {}
+                    },
+                    Err(e) => panic!("Stream error: {e}"),
+                }
+            }
+
+            // Verify we got text
+            let complete_text: String = text_chunks.join("");
+            assert!(
+                !complete_text.is_empty(),
+                "Expected text response, got empty"
+            );
+            println!("Text response: {}", complete_text);
+
+            // Verify no tool calls
+            assert!(
+                tool_completes.is_empty(),
+                "Expected no tool calls for this prompt"
+            );
+
+            // Verify stop reason is end_turn (not tool_use)
+            assert_eq!(
+                stop_reason,
+                Some("end_turn".to_string()),
+                "Expected stop_reason to be 'end_turn'"
+            );
+        }
+        Err(e) => panic!("Stream error: {e}"),
+    }
+}
+
+#[tokio::test]
+async fn test_anthropic_resilient_chat_stream_with_tools() {
+    let api_key = match std::env::var("ANTHROPIC_API_KEY") {
+        Ok(key) => key,
+        Err(_) => {
+            eprintln!(
+                "test test_anthropic_resilient_chat_stream_with_tools ... ignored, ANTHROPIC_API_KEY not set"
+            );
+            return;
+        }
+    };
+
+    use llm::chat::StreamChunk;
+
+    let llm = LLMBuilder::new()
+        .backend(LLMBackend::Anthropic)
+        .api_key(api_key)
+        .model("claude-3-5-haiku-20241022")
+        .max_tokens(512)
+        .temperature(0.0)
+        .resilient(true)
+        .resilient_attempts(3)
+        .resilient_backoff(200, 2_000)
+        .function(
+            FunctionBuilder::new("get_weather")
+                .description("Get the current weather in a given location")
+                .param(
+                    ParamBuilder::new("location")
+                        .type_of("string")
+                        .description("The city to get weather for"),
+                )
+                .required(vec!["location".to_string()]),
+        )
+        .build()
+        .expect("Failed to build resilient LLM");
+
+    let messages = vec![ChatMessage::user()
+        .content("What's the weather in Paris? Use the get_weather tool.")
+        .build()];
+
+    match llm.chat_stream_with_tools(&messages, llm.tools()).await {
+        Ok(mut stream) => {
+            let mut text_chunks = Vec::new();
+            let mut tool_completes = Vec::new();
+            let mut stop_reason = None;
+
+            while let Some(chunk_result) = stream.next().await {
+                match chunk_result {
+                    Ok(chunk) => {
+                        println!("Resilient stream chunk: {:?}", chunk);
+                        match chunk {
+                            StreamChunk::Text(t) => text_chunks.push(t),
+                            StreamChunk::ToolUseComplete { tool_call, .. } => {
+                                tool_completes.push(tool_call);
+                            }
+                            StreamChunk::Done { stop_reason: sr } => {
+                                stop_reason = Some(sr);
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(e) => panic!("Resilient stream error: {e}"),
+                }
+            }
+
+            // Verify we got a tool call
+            assert!(
+                !tool_completes.is_empty(),
+                "Expected at least one tool call with resilient wrapper"
+            );
+            assert_eq!(
+                tool_completes[0].function.name, "get_weather",
+                "Expected get_weather tool call"
+            );
+
+            // Verify stop reason
+            assert_eq!(
+                stop_reason,
+                Some("tool_use".to_string()),
+                "Expected stop_reason to be 'tool_use'"
+            );
+
+            println!(
+                "Resilient streaming with tools succeeded. Tool args: {}",
+                tool_completes[0].function.arguments
+            );
+        }
+        Err(e) => panic!("Failed to start resilient stream: {e}"),
+    }
+}
+
+// Note: test_anthropic_resilient_chat_stream_struct removed because
+// Anthropic backend does not implement chat_stream_struct
