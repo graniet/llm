@@ -847,6 +847,10 @@ impl LLMBuilder {
                         LLMError::InvalidRequest("No API key provided for Google".to_string())
                     })?;
 
+                    // Convert reasoning_budget_tokens (u32) to thinking_budget (i32)
+                    // -1 means dynamic thinking, 0 means off (for supported models)
+                    let thinking_budget = self.reasoning_budget_tokens.map(|b| b as i32);
+
                     let google = crate::backends::google::Google::new(
                         api_key,
                         self.model,
@@ -858,6 +862,9 @@ impl LLMBuilder {
                         self.top_k,
                         self.json_schema,
                         tools,
+                        thinking_budget,
+                        self.reasoning_effort, // Used as thinking_level for Gemini 3 models
+                        self.reasoning, // Used as include_thoughts
                     );
                     Box::new(google)
                 }

@@ -87,6 +87,12 @@ pub struct Google {
     pub json_schema: Option<StructuredOutputFormat>,
     /// Available tools for function calling
     pub tools: Option<Vec<Tool>>,
+    /// Thinking budget tokens (for Gemini 2.5 models)
+    pub thinking_budget: Option<i32>,
+    /// Thinking level (for Gemini 3 models): "low", "medium", "high", "minimal"
+    pub thinking_level: Option<String>,
+    /// Whether to include thought summaries in responses
+    pub include_thoughts: Option<bool>,
     /// HTTP client for making API requests
     client: Client,
 }
@@ -153,6 +159,24 @@ struct GoogleGenerationConfig {
     /// A schema for structured output
     #[serde(skip_serializing_if = "Option::is_none")]
     response_schema: Option<Value>,
+    /// Thinking/reasoning configuration
+    #[serde(skip_serializing_if = "Option::is_none", rename = "thinkingConfig")]
+    thinking_config: Option<GoogleThinkingConfig>,
+}
+
+/// Configuration for thinking/reasoning capabilities
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GoogleThinkingConfig {
+    /// Budget for thinking tokens (Gemini 2.5 models)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking_budget: Option<i32>,
+    /// Thinking level (Gemini 3 models): "low", "medium", "high", "minimal"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking_level: Option<String>,
+    /// Whether to include thought summaries in the response
+    #[serde(skip_serializing_if = "Option::is_none")]
+    include_thoughts: Option<bool>,
 }
 
 /// Response from the chat completion API
@@ -177,6 +201,9 @@ struct GoogleUsageMetadata {
     /// Total number of tokens used
     #[serde(rename = "totalTokenCount")]
     total_token_count: Option<u32>,
+    /// Number of tokens used for thinking/reasoning
+    #[serde(rename = "thoughtsTokenCount")]
+    thoughts_token_count: Option<u32>,
 }
 
 /// Response from the streaming chat completion API
@@ -235,7 +262,10 @@ impl ChatResponse for GoogleChatResponse {
     fn text(&self) -> Option<String> {
         self.candidates
             .first()
-            .map(|c| c.content.parts.iter().map(|p| p.text.clone()).collect())
+            .map(|c| c.content.parts.iter()
+                .filter(|p| !p.thought) // Exclude thought parts from regular text
+                .map(|p| p.text.clone())
+                .collect())
     }
 
     fn tool_calls(&self) -> Option<Vec<ToolCall>> {
@@ -291,6 +321,24 @@ impl ChatResponse for GoogleChatResponse {
         })
     }
 
+    fn thinking(&self) -> Option<String> {
+        self.candidates.first().and_then(|c| {
+            let thoughts: Vec<String> = c
+                .content
+                .parts
+                .iter()
+                .filter(|p| p.thought && !p.text.is_empty())
+                .map(|p| p.text.clone())
+                .collect();
+            
+            if thoughts.is_empty() {
+                None
+            } else {
+                Some(thoughts.join("\n"))
+            }
+        })
+    }
+
     fn usage(&self) -> Option<Usage> {
         self.usage_metadata.as_ref().and_then(|metadata| {
             match (metadata.prompt_token_count, metadata.candidates_token_count) {
@@ -318,6 +366,12 @@ struct GoogleResponsePart {
     /// Function call contained in this part
     #[serde(rename = "functionCall")]
     function_call: Option<GoogleFunctionCall>,
+    /// Whether this part contains a thought summary
+    #[serde(default)]
+    thought: bool,
+    /// Thought signature for maintaining reasoning context across turns
+    #[serde(rename = "thoughtSignature")]
+    thought_signature: Option<String>,
 }
 
 /// MIME type of the response
@@ -479,6 +533,9 @@ impl Google {
     /// * `top_k` - Top-k sampling parameter
     /// * `json_schema` - JSON schema for structured output
     /// * `tools` - Function tools that the model can use
+    /// * `thinking_budget` - Budget for thinking tokens (Gemini 2.5 models)
+    /// * `thinking_level` - Thinking level (Gemini 3 models): "low", "medium", "high", "minimal"
+    /// * `include_thoughts` - Whether to include thought summaries in responses
     ///
     /// # Returns
     ///
@@ -495,6 +552,9 @@ impl Google {
         top_k: Option<u32>,
         json_schema: Option<StructuredOutputFormat>,
         tools: Option<Vec<Tool>>,
+        thinking_budget: Option<i32>,
+        thinking_level: Option<String>,
+        include_thoughts: Option<bool>,
     ) -> Self {
         let mut builder = Client::builder();
         if let Some(sec) = timeout_seconds {
@@ -511,8 +571,67 @@ impl Google {
             top_k,
             json_schema,
             tools,
+            thinking_budget,
+            thinking_level,
+            include_thoughts,
             client: builder.build().expect("Failed to build reqwest Client"),
         }
+    }
+
+    /// Creates the generation config for API requests
+    fn build_generation_config(&self) -> Option<GoogleGenerationConfig> {
+        // Check if we have any config to send
+        if self.max_tokens.is_none()
+            && self.temperature.is_none()
+            && self.top_p.is_none()
+            && self.top_k.is_none()
+            && self.json_schema.is_none()
+            && self.thinking_budget.is_none()
+            && self.thinking_level.is_none()
+            && self.include_thoughts.is_none()
+        {
+            return None;
+        }
+
+        // Handle structured output schema
+        let (response_mime_type, response_schema) = if let Some(json_schema) = &self.json_schema {
+            if let Some(schema) = &json_schema.schema {
+                // If the schema has an "additionalProperties" field (as required by OpenAI), remove it as Google's API doesn't support it
+                let mut schema = schema.clone();
+                if let Some(obj) = schema.as_object_mut() {
+                    obj.remove("additionalProperties");
+                }
+                (Some(GoogleResponseMimeType::Json), Some(schema))
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
+        // Build thinking config if any thinking parameters are set
+        let thinking_config = if self.thinking_budget.is_some()
+            || self.thinking_level.is_some()
+            || self.include_thoughts.is_some()
+        {
+            Some(GoogleThinkingConfig {
+                thinking_budget: self.thinking_budget,
+                thinking_level: self.thinking_level.clone(),
+                include_thoughts: self.include_thoughts,
+            })
+        } else {
+            None
+        };
+
+        Some(GoogleGenerationConfig {
+            max_output_tokens: self.max_tokens,
+            temperature: self.temperature,
+            top_p: self.top_p,
+            top_k: self.top_k,
+            response_mime_type,
+            response_schema,
+            thinking_config,
+        })
     }
 }
 
@@ -601,40 +720,7 @@ impl ChatProvider for Google {
         }
 
         // Remove generation_config if empty to avoid validation errors
-        let generation_config = if self.max_tokens.is_none()
-            && self.temperature.is_none()
-            && self.top_p.is_none()
-            && self.top_k.is_none()
-            && self.json_schema.is_none()
-        {
-            None
-        } else {
-            // If json_schema and json_schema.schema are not None, use json_schema.schema as the response schema and set response_mime_type to JSON
-            // Google's API doesn't need the schema to have a "name" field, so we can just use the schema directly.
-            let (response_mime_type, response_schema) = if let Some(json_schema) = &self.json_schema
-            {
-                if let Some(schema) = &json_schema.schema {
-                    // If the schema has an "additionalProperties" field (as required by OpenAI), remove it as Google's API doesn't support it
-                    let mut schema = schema.clone();
-                    if let Some(obj) = schema.as_object_mut() {
-                        obj.remove("additionalProperties");
-                    }
-                    (Some(GoogleResponseMimeType::Json), Some(schema))
-                } else {
-                    (None, None)
-                }
-            } else {
-                (None, None)
-            };
-            Some(GoogleGenerationConfig {
-                max_output_tokens: self.max_tokens,
-                temperature: self.temperature,
-                top_p: self.top_p,
-                top_k: self.top_k,
-                response_mime_type,
-                response_schema,
-            })
-        };
+        let generation_config = self.build_generation_config();
 
         let req_body = GoogleChatRequest {
             contents: chat_contents,
@@ -776,36 +862,7 @@ impl ChatProvider for Google {
         });
 
         // Build generation config
-        let generation_config = {
-            // If json_schema and json_schema.schema are not None, use json_schema.schema as the response schema and set response_mime_type to JSON
-            // Google's API doesn't need the schema to have a "name" field, so we can just use the schema directly.
-            let (response_mime_type, response_schema) = if let Some(json_schema) = &self.json_schema
-            {
-                if let Some(schema) = &json_schema.schema {
-                    // If the schema has an "additionalProperties" field (as required by OpenAI), remove it as Google's API doesn't support it
-                    let mut schema = schema.clone();
-
-                    if let Some(obj) = schema.as_object_mut() {
-                        obj.remove("additionalProperties");
-                    }
-
-                    (Some(GoogleResponseMimeType::Json), Some(schema))
-                } else {
-                    (None, None)
-                }
-            } else {
-                (None, None)
-            };
-
-            Some(GoogleGenerationConfig {
-                max_output_tokens: self.max_tokens,
-                temperature: self.temperature,
-                top_p: self.top_p,
-                top_k: self.top_k,
-                response_mime_type,
-                response_schema,
-            })
-        };
+        let generation_config = self.build_generation_config();
 
         let req_body = GoogleChatRequest {
             contents: chat_contents,
@@ -941,22 +998,7 @@ impl ChatProvider for Google {
                 },
             });
         }
-        let generation_config = if self.max_tokens.is_none()
-            && self.temperature.is_none()
-            && self.top_p.is_none()
-            && self.top_k.is_none()
-        {
-            None
-        } else {
-            Some(GoogleGenerationConfig {
-                max_output_tokens: self.max_tokens,
-                temperature: self.temperature,
-                top_p: self.top_p,
-                top_k: self.top_k,
-                response_mime_type: None,
-                response_schema: None,
-            })
-        };
+        let generation_config = self.build_generation_config();
 
         let req_body = GoogleChatRequest {
             contents: chat_contents,
