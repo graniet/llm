@@ -327,7 +327,7 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
         };
         Self {
             api_key: api_key.into(),
-            base_url: Url::parse(&base_url.unwrap_or_else(|| T::DEFAULT_BASE_URL.to_owned()))
+            base_url: Url::parse(&format!("{}/", base_url.unwrap_or_else(|| T::DEFAULT_BASE_URL.to_owned()).trim_end_matches("/")))
                 .expect("Failed to parse base URL"),
             model: model.unwrap_or_else(|| T::DEFAULT_MODEL.to_string()),
             max_tokens,
