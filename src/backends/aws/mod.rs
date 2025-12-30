@@ -17,6 +17,22 @@ use aws_sdk_bedrockruntime::{
 };
 use aws_smithy_types::{Blob, Document};
 use serde_json::{json, Value};
+use std::sync::Arc;
+use tokio::sync::OnceCell;
+use futures::{Stream, StreamExt};
+use std::pin::Pin;
+use async_trait::async_trait;
+
+use crate::chat::{
+    ChatProvider, ChatMessage as LlmChatMessage,
+    Tool as LlmTool, ToolChoice as LlmToolChoice, StructuredOutputFormat,
+};
+use crate::completion::{CompletionProvider, CompletionRequest as GenericCompletionRequest, CompletionResponse as GenericCompletionResponse};
+use crate::embedding::EmbeddingProvider;
+use crate::models::ModelsProvider;
+use crate::tts::TextToSpeechProvider;
+use crate::stt::SpeechToTextProvider;
+use crate::LLMProvider;
 
 mod error;
 mod models;
@@ -29,46 +45,125 @@ pub use types::*;
 /// AWS Bedrock backend client
 #[derive(Clone, Debug)]
 pub struct BedrockBackend {
-    client: BedrockClient,
+    client: Arc<OnceCell<BedrockClient>>,
     region: String,
-    default_model: BedrockModel,
+    // Configuration
+    model: Option<BedrockModel>,
+    max_tokens: Option<u32>,
+    temperature: Option<f32>,
+    timeout_seconds: Option<u64>,
+    system: Option<String>,
+    top_p: Option<f32>,
+    top_k: Option<u32>,
+    tools: Option<Vec<LlmTool>>,
+    tool_choice: Option<LlmToolChoice>,
+    reasoning_effort: Option<String>,
+    json_schema: Option<StructuredOutputFormat>,
 }
 
 impl BedrockBackend {
-    /// Create a new Bedrock backend with default AWS configuration
-    pub async fn new() -> Result<Self> {
+    /// Create a new Bedrock backend from environment variables (async)
+    pub async fn from_env() -> Result<Self> {
         let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
         let region = config
             .region()
             .map(|r| r.to_string())
             .unwrap_or_else(|| "us-east-1".to_string());
         let client = BedrockClient::new(&config);
+        let cell = OnceCell::new();
+        cell.set(client).ok();
 
         Ok(Self {
-            client,
+            client: Arc::new(cell),
             region,
-            default_model: BedrockModel::Direct(DirectModel::ClaudeSonnet4),
+            model: Some(BedrockModel::Direct(DirectModel::ClaudeSonnet4)),
+            max_tokens: None,
+            temperature: None,
+            timeout_seconds: None,
+            system: None,
+            top_p: None,
+            top_k: None,
+            tools: None,
+            tool_choice: None,
+            reasoning_effort: None,
+            json_schema: None,
         })
     }
 
-    /// Create a new Bedrock backend with custom configuration
+    /// Create a new Bedrock backend with custom configuration (async)
     pub async fn with_config(config: aws_config::SdkConfig) -> Result<Self> {
         let region = config
             .region()
             .map(|r| r.to_string())
             .unwrap_or_else(|| "us-east-1".to_string());
         let client = BedrockClient::new(&config);
+        let cell = OnceCell::new();
+        cell.set(client).ok();
 
         Ok(Self {
-            client,
+            client: Arc::new(cell),
             region,
-            default_model: BedrockModel::Direct(DirectModel::ClaudeSonnet4),
+            model: Some(BedrockModel::Direct(DirectModel::ClaudeSonnet4)),
+            max_tokens: None,
+            temperature: None,
+            timeout_seconds: None,
+            system: None,
+            top_p: None,
+            top_k: None,
+            tools: None,
+            tool_choice: None,
+            reasoning_effort: None,
+            json_schema: None,
         })
+    }
+
+    /// Create a new Bedrock backend with specific options (synchronous, for builder)
+    pub fn new(
+        region: String,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<String>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+        tools: Option<Vec<LlmTool>>,
+        tool_choice: Option<LlmToolChoice>,
+        reasoning_effort: Option<String>,
+        json_schema: Option<StructuredOutputFormat>,
+    ) -> Result<Self> {
+        Ok(Self {
+            client: Arc::new(OnceCell::new()),
+            region,
+            model: model.map(BedrockModel::Custom),
+            max_tokens,
+            temperature,
+            timeout_seconds,
+            system,
+            top_p,
+            top_k,
+            tools,
+            tool_choice,
+            reasoning_effort,
+            json_schema,
+        })
+    }
+
+    async fn get_client(&self) -> Result<&BedrockClient> {
+        self.client
+            .get_or_try_init(|| async {
+                let config = aws_config::from_env()
+                    .region(aws_config::Region::new(self.region.clone()))
+                    .load()
+                    .await;
+                Ok(BedrockClient::new(&config))
+            })
+            .await
     }
 
     /// Set the default model
     pub fn with_model(mut self, model: BedrockModel) -> Self {
-        self.default_model = model;
+        self.model = Some(model);
         self
     }
 
@@ -78,8 +173,9 @@ impl BedrockBackend {
     }
 
     /// Complete a prompt using the Bedrock Converse API
-    pub async fn complete(&self, request: CompletionRequest) -> Result<CompletionResponse> {
-        let default_model = self.default_model.clone();
+    pub async fn complete_request(&self, request: CompletionRequest) -> Result<CompletionResponse> {
+        let client = self.get_client().await?;
+        let default_model = self.model.clone().unwrap_or(BedrockModel::Direct(DirectModel::ClaudeSonnet4));
         let model_id = request.model.unwrap_or(default_model);
 
         // Convert prompt to message format
@@ -89,23 +185,22 @@ impl BedrockBackend {
             .build()
             .map_err(|e| BedrockError::InvalidRequest(e.to_string()))?];
 
-        let mut converse_request = self
-            .client
+        let mut converse_request = client
             .converse()
             .model_id(model_id.model_id())
             .set_messages(Some(messages));
 
         // Add system prompt if provided
-        if let Some(system) = request.system {
+        if let Some(system) = request.system.or(self.system.clone()) {
             converse_request = converse_request.system(SystemContentBlock::Text(system));
         }
 
         // Add inference configuration
         converse_request = converse_request.inference_config(
             aws_sdk_bedrockruntime::types::InferenceConfiguration::builder()
-                .set_max_tokens(request.max_tokens.map(|t| t as i32))
-                .set_temperature(request.temperature.map(|t| t as f32))
-                .set_top_p(request.top_p.map(|p| p as f32))
+                .set_max_tokens(request.max_tokens.or(self.max_tokens).map(|t| t as i32))
+                .set_temperature(request.temperature.map(|t| t as f32).or(self.temperature))
+                .set_top_p(request.top_p.map(|p| p as f32).or(self.top_p))
                 .set_stop_sequences(request.stop_sequences)
                 .build(),
         );
@@ -157,8 +252,10 @@ impl BedrockBackend {
     }
 
     /// Chat with the model using the Converse API
-    pub async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {
-        let model_id = request.model.unwrap_or_else(|| self.default_model.clone());
+    pub async fn chat_request(&self, request: ChatRequest) -> Result<ChatResponse> {
+        let client = self.get_client().await?;
+        let default_model = self.model.clone().unwrap_or(BedrockModel::Direct(DirectModel::ClaudeSonnet4));
+        let model_id = request.model.unwrap_or(default_model);
 
         // Validate model capabilities
         if !model_id.supports(ModelCapability::Chat) {
@@ -175,30 +272,38 @@ impl BedrockBackend {
             .map(|msg| self.convert_message(msg))
             .collect::<Result<Vec<_>>>()?;
 
-        let mut converse_request = self
-            .client
+        let mut converse_request = client
             .converse()
             .model_id(model_id.model_id())
             .set_messages(Some(messages));
 
         // Add system prompt if provided
-        if let Some(system) = request.system {
+        if let Some(system) = request.system.or(self.system.clone()) {
             converse_request = converse_request.system(SystemContentBlock::Text(system));
         }
 
         // Add tools if provided
+        let mut bedrock_tools = Vec::new();
+        
         if let Some(tools) = request.tools {
+            for tool in tools {
+                bedrock_tools.push(self.convert_tool(&tool)?);
+            }
+        }
+        
+        if let Some(tools) = &self.tools {
+            for tool in tools {
+                bedrock_tools.push(self.convert_llm_tool(tool)?);
+            }
+        }
+
+        if !bedrock_tools.is_empty() {
             if !model_id.supports(ModelCapability::ToolUse) {
                 return Err(BedrockError::UnsupportedOperation(format!(
                     "Model {} does not support tool use",
                     model_id.model_id()
                 )));
             }
-
-            let bedrock_tools: Vec<Tool> = tools
-                .iter()
-                .map(|tool| self.convert_tool(tool))
-                .collect::<Result<Vec<_>>>()?;
 
             let tool_config = ToolConfiguration::builder()
                 .set_tools(Some(bedrock_tools))
@@ -211,9 +316,9 @@ impl BedrockBackend {
         // Add inference configuration
         converse_request = converse_request.inference_config(
             aws_sdk_bedrockruntime::types::InferenceConfiguration::builder()
-                .set_max_tokens(request.max_tokens.map(|t| t as i32))
-                .set_temperature(request.temperature.map(|t| t as f32))
-                .set_top_p(request.top_p.map(|p| p as f32))
+                .set_max_tokens(request.max_tokens.or(self.max_tokens).map(|t| t as i32))
+                .set_temperature(request.temperature.map(|t| t as f32).or(self.temperature))
+                .set_top_p(request.top_p.map(|p| p as f32).or(self.top_p))
                 .set_stop_sequences(request.stop_sequences)
                 .build(),
         );
@@ -228,9 +333,11 @@ impl BedrockBackend {
     }
 
     /// Generate embeddings for text
-    pub async fn embed(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse> {
+    pub async fn embed_request(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse> {
+        let client = self.get_client().await?;
         let model_id = request
             .model
+            .or(self.model.clone())
             .unwrap_or(BedrockModel::Direct(DirectModel::TitanEmbedV2));
 
         if !model_id.supports(ModelCapability::Embeddings) {
@@ -280,8 +387,7 @@ impl BedrockBackend {
             }
         };
 
-        let response = self
-            .client
+        let response = client
             .invoke_model()
             .model_id(model_id.model_id())
             .body(Blob::new(serde_json::to_vec(&input_body)?))
@@ -357,7 +463,8 @@ impl BedrockBackend {
         &self,
         request: ChatRequest,
     ) -> Result<impl futures::Stream<Item = Result<ChatStreamChunk>>> {
-        let default_model = self.default_model.clone();
+        let client = self.get_client().await?;
+        let default_model = self.model.clone().unwrap_or(BedrockModel::Direct(DirectModel::ClaudeSonnet4));
         let model_id = request.model.unwrap_or(default_model);
 
         // Convert messages
@@ -367,23 +474,23 @@ impl BedrockBackend {
             .map(|msg| self.convert_message(msg))
             .collect::<Result<Vec<_>>>()?;
 
-        let mut converse_request = self
-            .client
+        let mut converse_request = client
             .converse_stream()
             .model_id(model_id.model_id())
             .set_messages(Some(messages));
 
         // Add system prompt if provided
-        if let Some(system) = request.system {
+        if let Some(system) = request.system.or(self.system.clone()) {
             converse_request = converse_request.system(SystemContentBlock::Text(system));
         }
 
         // Add inference configuration
         converse_request = converse_request.inference_config(
             aws_sdk_bedrockruntime::types::InferenceConfiguration::builder()
-                .set_max_tokens(request.max_tokens.map(|t| t as i32))
-                .set_temperature(request.temperature.map(|t| t as f32))
-                .set_top_p(request.top_p.map(|p| p as f32))
+                .set_max_tokens(request.max_tokens.or(self.max_tokens).map(|t| t as i32))
+                .set_temperature(request.temperature.map(|t| t as f32).or(self.temperature))
+                .set_top_p(request.top_p.map(|p| p as f32).or(self.top_p))
+                .set_stop_sequences(request.stop_sequences)
                 .build(),
         );
 
@@ -618,6 +725,23 @@ impl BedrockBackend {
         })
     }
 
+    fn convert_llm_tool(&self, tool: &LlmTool) -> Result<Tool> {
+        if tool.tool_type != "function" {
+             return Err(BedrockError::InvalidRequest(format!("Unsupported tool type: {}", tool.tool_type)));
+        }
+
+        let input_schema = ToolInputSchema::Json(Self::value_to_document(&tool.function.parameters));
+        
+        let tool_spec = aws_sdk_bedrockruntime::types::ToolSpecification::builder()
+            .name(&tool.function.name)
+            .description(&tool.function.description)
+            .input_schema(input_schema)
+            .build()
+            .map_err(|e| BedrockError::InvalidRequest(format!("Failed to build tool spec: {:?}", e)))?;
+        
+        Ok(Tool::ToolSpec(tool_spec))
+    }
+
     fn convert_media_type(media_type: &str) -> Result<aws_sdk_bedrockruntime::types::ImageFormat> {
         match media_type {
             "image/png" => Ok(aws_sdk_bedrockruntime::types::ImageFormat::Png),
@@ -674,6 +798,139 @@ impl BedrockBackend {
     }
 }
 
+#[async_trait]
+impl ModelsProvider for BedrockBackend {
+    async fn list_models(&self, _request: Option<&crate::models::ModelListRequest>) -> std::result::Result<Box<dyn crate::models::ModelListResponse>, crate::error::LLMError> {
+        Err(crate::error::LLMError::Generic("List models not supported for Bedrock".to_string()))
+    }
+}
+
+#[async_trait]
+impl TextToSpeechProvider for BedrockBackend {
+    async fn speech(&self, _input: &str) -> std::result::Result<Vec<u8>, crate::error::LLMError> {
+        Err(crate::error::LLMError::Generic("TTS not supported for Bedrock".to_string()))
+    }
+}
+
+#[async_trait]
+impl SpeechToTextProvider for BedrockBackend {
+    async fn transcribe(&self, _audio: Vec<u8>) -> std::result::Result<String, crate::error::LLMError> {
+        Err(crate::error::LLMError::Generic("STT not supported for Bedrock".to_string()))
+    }
+}
+
+#[async_trait]
+impl ChatProvider for BedrockBackend {
+    async fn chat_with_tools(
+        &self,
+        messages: &[LlmChatMessage],
+        tools: Option<&[LlmTool]>,
+    ) -> std::result::Result<Box<dyn crate::chat::ChatResponse>, crate::error::LLMError> {
+        let aws_messages: Vec<ChatMessage> = messages.iter().map(|m| {
+            let role = match m.role {
+                crate::chat::ChatRole::User => "user",
+                crate::chat::ChatRole::Assistant => "assistant",
+            };
+            
+            let content = match &m.message_type {
+                crate::chat::MessageType::Text => MessageContent::Text(m.content.clone()),
+                crate::chat::MessageType::Image((mime, bytes)) => {
+                    MessageContent::MultiModal(vec![
+                        ContentPart::Text { text: m.content.clone() },
+                        ContentPart::Image {
+                            source: bytes.clone(),
+                            media_type: mime.mime_type().to_string(),
+                        }
+                    ])
+                },
+                _ => MessageContent::Text(m.content.clone()),
+            };
+
+            ChatMessage {
+                role: role.to_string(),
+                content,
+            }
+        }).collect();
+
+        let mut request = ChatRequest::new(aws_messages);
+        
+        if let Some(tools) = tools {
+            let tool_defs: Vec<ToolDefinition> = tools.iter().map(|t| ToolDefinition {
+                name: t.function.name.clone(),
+                description: t.function.description.clone(),
+                input_schema: t.function.parameters.clone(),
+            }).collect();
+            
+            request = request.with_tools(tool_defs);
+        }
+        
+        let response = self.chat_request(request).await.map_err(|e| crate::error::LLMError::ProviderError(e.to_string()))?;
+        Ok(Box::new(response))
+    }
+
+    async fn chat_stream(
+        &self,
+        messages: &[LlmChatMessage],
+    ) -> std::result::Result<Pin<Box<dyn Stream<Item = std::result::Result<String, crate::error::LLMError>> + Send>>, crate::error::LLMError> {
+        let aws_messages: Vec<ChatMessage> = messages.iter().map(|m| {
+             let role = match m.role {
+                crate::chat::ChatRole::User => "user",
+                crate::chat::ChatRole::Assistant => "assistant",
+            };
+            ChatMessage {
+                role: role.to_string(),
+                content: MessageContent::Text(m.content.clone()),
+            }
+        }).collect();
+
+        let request = ChatRequest::new(aws_messages);
+        let stream = self.chat_stream(request).await.map_err(|e| crate::error::LLMError::ProviderError(e.to_string()))?;
+        
+        let stream = stream.map(|item| {
+            match item {
+                Ok(chunk) => Ok(chunk.delta),
+                Err(e) => Err(crate::error::LLMError::ProviderError(e.to_string())),
+            }
+        });
+        
+        Ok(Box::pin(stream))
+    }
+}
+
+#[async_trait]
+impl CompletionProvider for BedrockBackend {
+    async fn complete(
+        &self,
+        req: &GenericCompletionRequest,
+    ) -> std::result::Result<GenericCompletionResponse, crate::error::LLMError> {
+        let request = CompletionRequest::new(&req.prompt);
+        let response = self.complete_request(request).await.map_err(|e| crate::error::LLMError::ProviderError(e.to_string()))?;
+        
+        Ok(GenericCompletionResponse {
+            text: response.text,
+        })
+    }
+}
+
+#[async_trait]
+impl EmbeddingProvider for BedrockBackend {
+    async fn embed(
+        &self,
+        inputs: Vec<String>,
+    ) -> std::result::Result<Vec<Vec<f32>>, crate::error::LLMError> {
+        let mut embeddings = Vec::new();
+        for input in inputs {
+            let request = EmbeddingRequest::new(input);
+            let response = self.embed_request(request).await.map_err(|e| crate::error::LLMError::ProviderError(e.to_string()))?;
+            let embedding_f32: Vec<f32> = response.embedding.iter().map(|&x| x as f32).collect();
+            embeddings.push(embedding_f32);
+        }
+        Ok(embeddings)
+    }
+}
+
+impl LLMProvider for BedrockBackend {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -682,7 +939,7 @@ mod tests {
     async fn test_backend_creation() {
         // This test requires AWS credentials
         // Run with: AWS_PROFILE=your-profile cargo test
-        let result = BedrockBackend::new().await;
+        let result = BedrockBackend::from_env().await;
         assert!(result.is_ok() || matches!(result, Err(BedrockError::ConfigurationError(_))));
     }
 }

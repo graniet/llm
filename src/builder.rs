@@ -51,6 +51,8 @@ pub enum LLMBackend {
     OpenRouter,
     /// HuggingFace Inference Providers API
     HuggingFace,
+    /// AWS Bedrock API provider
+    AwsBedrock
 }
 
 /// Implements string parsing for LLMBackend enum.
@@ -1079,6 +1081,32 @@ impl LLMBuilder {
                         self.reasoning_effort,
                         self.json_schema,
                     ))
+                }
+            }
+            LLMBackend::AwsBedrock => {
+                #[cfg(not(feature = "bedrock"))]
+                return Err(LLMError::InvalidRequest(
+                    "AWS Bedrock feature not enabled".to_string(),
+                ));
+                #[cfg(feature = "bedrock")]
+                {
+                    let region = self.base_url.ok_or_else(|| {
+                        LLMError::InvalidRequest("No region provided for AWS Bedrock".into())
+                    })?;
+                    Box::new(crate::backends::aws::BedrockBackend::new(
+                        region,
+                        self.model,
+                        self.max_tokens,
+                        self.temperature,
+                        self.timeout_seconds,
+                        self.system,
+                        self.top_p,
+                        self.top_k,
+                        tools,
+                        tool_choice,
+                        self.reasoning_effort,
+                        self.json_schema,
+                    )?)
                 }
             }
         };

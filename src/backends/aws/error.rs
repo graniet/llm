@@ -60,6 +60,20 @@ impl From<serde_json::Error> for BedrockError {
     }
 }
 
+impl From<BedrockError> for crate::error::LLMError {
+    fn from(err: BedrockError) -> Self {
+        match err {
+            BedrockError::ConfigurationError(msg) => crate::error::LLMError::InvalidRequest(msg),
+            BedrockError::InvalidRequest(msg) => crate::error::LLMError::InvalidRequest(msg),
+            BedrockError::InvalidResponse(msg) => crate::error::LLMError::ProviderError(msg),
+            BedrockError::ApiError(msg) => crate::error::LLMError::ProviderError(msg),
+            BedrockError::UnsupportedOperation(msg) => crate::error::LLMError::InvalidRequest(msg),
+            BedrockError::StreamError(msg) => crate::error::LLMError::ProviderError(msg),
+            BedrockError::SerdeError(e) => crate::error::LLMError::JsonError(e.to_string()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

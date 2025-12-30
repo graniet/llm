@@ -158,6 +158,59 @@ pub struct ChatResponse {
     pub finish_reason: Option<String>,
 }
 
+impl std::fmt::Display for ChatResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.text().unwrap_or_default())
+    }
+}
+
+use crate::{chat::{ChatResponse as ChatResponseTrait, Usage}, ToolCall, FunctionCall};
+
+impl ChatResponseTrait for ChatResponse {
+    fn text(&self) -> Option<String> {
+        match &self.message.content {
+            MessageContent::Text(t) => Some(t.clone()),
+            MessageContent::MultiModal(parts) => {
+                let texts: Vec<String> = parts.iter().filter_map(|p| match p {
+                    ContentPart::Text { text } => Some(text.clone()),
+                    _ => None,
+                }).collect();
+                if texts.is_empty() { None } else { Some(texts.join("")) }
+            }
+        }
+    }
+
+    fn tool_calls(&self) -> Option<Vec<ToolCall>> {
+        match &self.message.content {
+            MessageContent::Text(_) => None,
+            MessageContent::MultiModal(parts) => {
+                let calls: Vec<ToolCall> = parts.iter().filter_map(|p| match p {
+                    ContentPart::ToolUse { id, name, input } => Some(ToolCall {
+                        id: id.clone(),
+                        function: FunctionCall {
+                            name: name.clone(),
+                            arguments: input.to_string(),
+                        },
+                        call_type: "function".to_string(),
+                    }),
+                    _ => None,
+                }).collect();
+                if calls.is_empty() { None } else { Some(calls) }
+            }
+        }
+    }
+
+    fn usage(&self) -> Option<Usage> {
+        self.usage.as_ref().map(|u| Usage {
+            prompt_tokens: u.input_tokens as u32,
+            completion_tokens: u.output_tokens as u32,
+            total_tokens: u.total_tokens as u32,
+            completion_tokens_details: None,
+            prompt_tokens_details: None,
+        })
+    }
+}
+
 /// Chunk of streaming chat response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatStreamChunk {

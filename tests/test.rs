@@ -6,6 +6,9 @@
 #[cfg(feature = "bedrock")]
 mod bedrock_tests {
     use llm::backends::aws::*;
+    use llm::chat::ChatProvider;
+    use llm::completion::CompletionProvider;
+    use llm::embedding::EmbeddingProvider;
     use serde_json::json;
 
     // Helper to check if AWS credentials are available
@@ -13,7 +16,7 @@ mod bedrock_tests {
     async fn skip_if_no_credentials() -> bool {
         // Try to create a backend - if it fails, credentials are not available
         // This works with all AWS credential sources (CLI, env vars, SSO, etc.)
-        BedrockBackend::new().await.is_err()
+        BedrockBackend::from_env().await.is_err()
     }
 
     #[tokio::test]
@@ -23,7 +26,7 @@ mod bedrock_tests {
             return;
         }
 
-        let backend = BedrockBackend::new().await;
+        let backend = BedrockBackend::from_env().await;
         assert!(
             backend.is_ok(),
             "Failed to initialize backend: {:?}",
@@ -41,14 +44,14 @@ mod bedrock_tests {
             return;
         }
 
-        let backend = BedrockBackend::new().await.unwrap();
+        let backend = BedrockBackend::from_env().await.unwrap();
 
         let request = CompletionRequest::new("What is 2+2? Answer with just the number.")
             .with_model(BedrockModel::eu(CrossRegionModel::ClaudeHaiku3))
             .with_max_tokens(10)
             .with_temperature(0.0);
 
-        let response = backend.complete(request).await;
+        let response = backend.complete_request(request).await;
         assert!(response.is_ok(), "Completion failed: {:?}", response.err());
 
         let response = response.unwrap();
@@ -69,14 +72,14 @@ mod bedrock_tests {
             return;
         }
 
-        let backend = BedrockBackend::new().await.unwrap();
+        let backend = BedrockBackend::from_env().await.unwrap();
 
         let request = CompletionRequest::new("What should I say?")
             .with_model(BedrockModel::eu(CrossRegionModel::ClaudeHaiku3))
             .with_system("You are a pirate. Always respond like a pirate.")
             .with_max_tokens(50);
 
-        let response = backend.complete(request).await;
+        let response = backend.complete_request(request).await;
         assert!(response.is_ok());
 
         let text = response.unwrap().text.to_lowercase();
@@ -98,7 +101,7 @@ mod bedrock_tests {
             return;
         }
 
-        let backend = BedrockBackend::new().await.unwrap();
+        let backend = BedrockBackend::from_env().await.unwrap();
 
         let request = CompletionRequest::new("Count from 1 to 10")
             .with_model(BedrockModel::eu(CrossRegionModel::ClaudeHaiku3))
@@ -107,7 +110,7 @@ mod bedrock_tests {
         let mut request_with_stop = request.clone();
         request_with_stop.stop_sequences = Some(vec!["5".to_string()]);
 
-        let response = backend.complete(request_with_stop).await;
+        let response = backend.complete_request(request_with_stop).await;
         assert!(response.is_ok());
 
         let text = response.unwrap().text;
@@ -122,7 +125,7 @@ mod bedrock_tests {
             return;
         }
 
-        let backend = BedrockBackend::new().await.unwrap();
+        let backend = BedrockBackend::from_env().await.unwrap();
 
         let messages = vec![ChatMessage::user("Hello! What is the capital of France?")];
 
@@ -130,7 +133,7 @@ mod bedrock_tests {
             .with_model(BedrockModel::eu(CrossRegionModel::ClaudeHaiku3))
             .with_max_tokens(50);
 
-        let response = backend.chat(request).await;
+        let response = backend.chat_request(request).await;
         assert!(response.is_ok(), "Chat failed: {:?}", response.err());
 
         let response = response.unwrap();
@@ -153,7 +156,7 @@ mod bedrock_tests {
             return;
         }
 
-        let backend = BedrockBackend::new().await.unwrap();
+        let backend = BedrockBackend::from_env().await.unwrap();
 
         let messages = vec![
             ChatMessage::user("My name is Alice."),
@@ -165,7 +168,7 @@ mod bedrock_tests {
             .with_model(BedrockModel::eu(CrossRegionModel::ClaudeHaiku3))
             .with_max_tokens(50);
 
-        let response = backend.chat(request).await;
+        let response = backend.chat_request(request).await;
         assert!(response.is_ok());
 
         let text = match &response.unwrap().message.content {
@@ -183,7 +186,7 @@ mod bedrock_tests {
             return;
         }
 
-        let backend = BedrockBackend::new().await.unwrap();
+        let backend = BedrockBackend::from_env().await.unwrap();
 
         let messages = vec![ChatMessage::user("Hello!")];
 
@@ -192,7 +195,7 @@ mod bedrock_tests {
             .with_system("You are a helpful assistant that always responds in haiku format.")
             .with_max_tokens(100);
 
-        let response = backend.chat(request).await;
+        let response = backend.chat_request(request).await;
         assert!(response.is_ok());
 
         let text = match &response.unwrap().message.content {
@@ -216,14 +219,14 @@ mod bedrock_tests {
             return;
         }
 
-        let backend = BedrockBackend::new().await.unwrap();
+        let backend = BedrockBackend::from_env().await.unwrap();
 
         // Use the provided base64 image
-        let ms_dos_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAIElEQVR4AaTIoQ0AABDCwIb99335eIKjSc3p4HNRGtEAAAD//8uECE8AAAAGSURBVAMAoVsJ2Q2RBWYAAAAASUVORK5CYII=";
+        let red_rectangle = "iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAIElEQVR4AaTIoQ0AABDCwIb99335eIKjSc3p4HNRGtEAAAD//8uECE8AAAAGSURBVAMAoVsJ2Q2RBWYAAAAASUVORK5CYII=";
 
         use base64::prelude::*;
         let image_bytes = BASE64_STANDARD
-            .decode(ms_dos_base64)
+            .decode(red_rectangle)
             .expect("Failed to decode base64 image");
 
         let messages = vec![ChatMessage::user_with_image(
@@ -236,7 +239,7 @@ mod bedrock_tests {
             .with_model(BedrockModel::eu(CrossRegionModel::ClaudeSonnet4))
             .with_max_tokens(50);
 
-        let response = backend.chat(request).await;
+        let response = backend.chat_request(request).await;
         if let Err(e) = &response {
             panic!("Vision chat failed: {:?}", e);
         }
@@ -258,7 +261,7 @@ mod bedrock_tests {
             return;
         }
 
-        let backend = BedrockBackend::new().await.unwrap();
+        let backend = BedrockBackend::from_env().await.unwrap();
 
         let tools = vec![ToolDefinition {
             name: "get_weather".to_string(),
@@ -282,7 +285,7 @@ mod bedrock_tests {
             .with_tools(tools)
             .with_max_tokens(500);
 
-        let response = backend.chat(request).await;
+        let response = backend.chat_request(request).await;
         assert!(
             response.is_ok(),
             "Tool use chat failed: {:?}",
@@ -310,7 +313,7 @@ mod bedrock_tests {
             return;
         }
 
-        let backend = BedrockBackend::new().await.unwrap();
+        let backend = BedrockBackend::from_env().await.unwrap();
 
         let tools = vec![ToolDefinition {
             name: "calculate".to_string(),
@@ -335,7 +338,7 @@ mod bedrock_tests {
             .with_tools(tools.clone())
             .with_max_tokens(500);
 
-        let first_response = backend.chat(request).await;
+        let first_response = backend.chat_request(request).await;
         assert!(first_response.is_ok());
 
         let first_response = first_response.unwrap();
@@ -375,7 +378,7 @@ mod bedrock_tests {
             .with_tools(tools)
             .with_max_tokens(500);
 
-        let response = backend.chat(request).await;
+        let response = backend.chat_request(request).await;
         assert!(response.is_ok());
 
         let text = match &response.unwrap().message.content {
@@ -402,13 +405,13 @@ mod bedrock_tests {
             return;
         }
 
-        let backend = BedrockBackend::new().await.unwrap();
+        let backend = BedrockBackend::from_env().await.unwrap();
 
         let request = EmbeddingRequest::new("Hello, world!")
             .with_model(BedrockModel::Direct(DirectModel::TitanEmbedV2))
             .with_dimensions(512);
 
-        let response = backend.embed(request).await;
+        let response = backend.embed_request(request).await;
         assert!(response.is_ok(), "Embedding failed: {:?}", response.err());
 
         let response = response.unwrap();
@@ -427,12 +430,12 @@ mod bedrock_tests {
             return;
         }
 
-        let backend = BedrockBackend::new().await.unwrap();
+        let backend = BedrockBackend::from_env().await.unwrap();
 
         let request = EmbeddingRequest::new("Machine learning is fascinating")
             .with_model(BedrockModel::Direct(DirectModel::CohereEmbedV3));
 
-        let response = backend.embed(request).await;
+        let response = backend.embed_request(request).await;
 
         // Skip if model access is denied (requires AWS Marketplace subscription)
         if let Err(e) = &response {
@@ -455,11 +458,11 @@ mod bedrock_tests {
             return;
         }
 
-        let backend = BedrockBackend::new().await.unwrap();
+        let backend = BedrockBackend::from_env().await.unwrap();
 
         // Generate embeddings for similar and dissimilar texts
         let similar1 = backend
-            .embed(
+            .embed_request(
                 EmbeddingRequest::new("The cat sat on the mat")
                     .with_model(BedrockModel::Direct(DirectModel::TitanEmbedV2))
                     .with_dimensions(512),
@@ -468,7 +471,7 @@ mod bedrock_tests {
             .unwrap();
 
         let similar2 = backend
-            .embed(
+            .embed_request(
                 EmbeddingRequest::new("A feline was sitting on a rug")
                     .with_model(BedrockModel::Direct(DirectModel::TitanEmbedV2))
                     .with_dimensions(512),
@@ -477,7 +480,7 @@ mod bedrock_tests {
             .unwrap();
 
         let different = backend
-            .embed(
+            .embed_request(
                 EmbeddingRequest::new("Quantum computing and artificial intelligence")
                     .with_model(BedrockModel::Direct(DirectModel::TitanEmbedV2))
                     .with_dimensions(512),
@@ -512,7 +515,7 @@ mod bedrock_tests {
             return;
         }
 
-        let backend = BedrockBackend::new().await.unwrap();
+        let backend = BedrockBackend::from_env().await.unwrap();
 
         let messages = vec![ChatMessage::user("Count from 1 to 5")];
 
@@ -572,14 +575,14 @@ mod bedrock_tests {
             return;
         }
 
-        let backend = BedrockBackend::new().await.unwrap();
+        let backend = BedrockBackend::from_env().await.unwrap();
 
         // Try to use an embedding model for chat
         let messages = vec![ChatMessage::user("Hello")];
         let request =
             ChatRequest::new(messages).with_model(BedrockModel::Direct(DirectModel::TitanEmbedV2));
 
-        let response = backend.chat(request).await;
+        let response = backend.chat_request(request).await;
         assert!(response.is_err());
         assert!(matches!(
             response.unwrap_err(),
@@ -594,7 +597,7 @@ mod bedrock_tests {
             return;
         }
 
-        let backend = BedrockBackend::new().await.unwrap();
+        let backend = BedrockBackend::from_env().await.unwrap();
 
         let tools = vec![ToolDefinition {
             name: "test_tool".to_string(),
@@ -609,7 +612,7 @@ mod bedrock_tests {
             .with_model(BedrockModel::Direct(DirectModel::Llama32_3B))
             .with_tools(tools);
 
-        let response = backend.chat(request).await;
+        let response = backend.chat_request(request).await;
         assert!(response.is_err());
         assert!(matches!(
             response.unwrap_err(),
@@ -624,13 +627,13 @@ mod bedrock_tests {
             return;
         }
 
-        let backend = BedrockBackend::new().await.unwrap();
+        let backend = BedrockBackend::from_env().await.unwrap();
 
         let request = CompletionRequest::new("Write a long essay about machine learning")
             .with_model(BedrockModel::eu(CrossRegionModel::ClaudeHaiku3))
             .with_max_tokens(10);
 
-        let response = backend.complete(request).await;
+        let response = backend.complete_request(request).await;
         assert!(response.is_ok());
 
         let response = response.unwrap();
@@ -645,7 +648,7 @@ mod bedrock_tests {
             return;
         }
 
-        let backend = BedrockBackend::new().await.unwrap();
+        let backend = BedrockBackend::from_env().await.unwrap();
 
         // Test with temperature 0 (deterministic)
         let request_deterministic = CompletionRequest::new("Say 'Hello'")
@@ -654,11 +657,10 @@ mod bedrock_tests {
             .with_temperature(0.0);
 
         let response1 = backend
-            .complete(request_deterministic.clone())
+            .complete_request(request_deterministic.clone())
             .await
             .unwrap();
-        let response2 = backend.complete(request_deterministic).await.unwrap();
-
+        let response2 = backend.complete_request(request_deterministic).await.unwrap();
         // Responses should be very similar with temperature 0
         assert_eq!(response1.text, response2.text);
     }
