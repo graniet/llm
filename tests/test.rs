@@ -6,9 +6,7 @@
 #[cfg(feature = "bedrock")]
 mod bedrock_tests {
     use llm::backends::aws::*;
-    use llm::chat::ChatProvider;
-    use llm::completion::CompletionProvider;
-    use llm::embedding::EmbeddingProvider;
+    use llm::chat::StructuredOutputFormat;
     use serde_json::json;
 
     // Helper to check if AWS credentials are available
@@ -549,6 +547,65 @@ mod bedrock_tests {
     }
 
     #[tokio::test]
+    async fn test_streaming_chat_with_structured_output() {
+        if skip_if_no_credentials().await {
+            println!("Skipping test: no AWS credentials");
+            return;
+        }
+
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" },
+                "age": { "type": "integer" }
+            },
+            "required": ["name", "age"]
+        });
+
+        let backend =
+            BedrockBackend::from_env()
+                .await
+                .unwrap()
+                .with_json_schema(StructuredOutputFormat {
+                    name: "json_person".to_string(),
+                    description: None,
+                    schema: Some(schema),
+                    strict: None,
+                });
+
+        let messages = vec![ChatMessage::user(
+            "Generate a person named John who is 30 years old.",
+        )];
+
+        let request = ChatRequest::new(messages)
+            .with_model(BedrockModel::eu(CrossRegionModel::ClaudeSonnet4))
+            .with_max_tokens(500);
+
+        let stream = backend.chat_stream(request).await;
+        assert!(stream.is_ok());
+
+        use futures::StreamExt;
+        let stream = stream.unwrap();
+        futures::pin_mut!(stream);
+        let mut collected = String::new();
+
+        while let Some(chunk_result) = stream.next().await {
+            assert!(chunk_result.is_ok());
+            let chunk = chunk_result.unwrap();
+            collected.push_str(&chunk.delta);
+        }
+
+        assert!(!collected.is_empty(), "Should collect some text");
+
+        // Verify it parses as JSON
+        let parsed: serde_json::Value =
+            serde_json::from_str(&collected).expect("Should be valid JSON");
+
+        assert_eq!(parsed["name"], "John");
+        assert_eq!(parsed["age"], 30);
+    }
+
+    #[tokio::test]
     async fn test_model_capabilities() {
         // Test model capability checks
         assert!(BedrockModel::eu(CrossRegionModel::ClaudeSonnet4).supports(ModelCapability::Chat));
@@ -660,7 +717,10 @@ mod bedrock_tests {
             .complete_request(request_deterministic.clone())
             .await
             .unwrap();
-        let response2 = backend.complete_request(request_deterministic).await.unwrap();
+        let response2 = backend
+            .complete_request(request_deterministic)
+            .await
+            .unwrap();
         // Responses should be very similar with temperature 0
         assert_eq!(response1.text, response2.text);
     }

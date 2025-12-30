@@ -52,7 +52,7 @@ pub enum LLMBackend {
     /// HuggingFace Inference Providers API
     HuggingFace,
     /// AWS Bedrock API provider
-    AwsBedrock
+    AwsBedrock,
 }
 
 /// Implements string parsing for LLMBackend enum.

@@ -2,6 +2,7 @@
 //! AWS Bedrock model definitions and capabilities
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 
 /// Supported AWS Bedrock models
@@ -237,16 +238,10 @@ impl BedrockModel {
             return None;
         }
 
-        if let Some(cross_model) =
-            CrossRegionModel::from_vendor_and_id(info_parts[1], info_parts[2])
-        {
-            Some(Self::CrossRegion {
+        CrossRegionModel::from_vendor_and_id(info_parts[1], info_parts[2]).map(|cross_model| Self::CrossRegion {
                 region: region.to_string(),
                 model: cross_model,
             })
-        } else {
-            None
-        }
     }
 
     /// Check if this is a cross-region inference profile (ARN-based)
@@ -268,6 +263,23 @@ impl BedrockModel {
                 }
             }
         }
+    }
+
+    pub(crate) fn override_keys(&self) -> Vec<String> {
+        let mut keys = vec![self.model_id()];
+
+        if let Self::CrossRegion { region, model } = self {
+            keys.push(format!(
+                "{}.{}.{}",
+                Self::region_prefix(region),
+                model.vendor(),
+                model.model_id()
+            ));
+            keys.push(format!("{}.{}", model.vendor(), model.model_id()));
+            keys.push(model.model_id().to_string());
+        }
+
+        keys
     }
 }
 
@@ -635,6 +647,111 @@ pub enum ModelCapability {
 
     /// Streaming responses
     Streaming,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ModelCapabilityOverrides {
+    #[serde(default)]
+    pub models: HashMap<String, ModelCapabilityOverride>,
+    #[serde(default)]
+    pub model: Vec<NamedModelCapabilityOverride>,
+}
+
+impl ModelCapabilityOverrides {
+    pub(crate) fn supports(
+        &self,
+        model: &BedrockModel,
+        capability: ModelCapability,
+    ) -> Option<bool> {
+        let keys = model.override_keys();
+        let normalized_keys: Vec<String> = keys
+            .iter()
+            .map(|key| Self::normalize_bedrock_arn(key).unwrap_or_else(|| key.clone()))
+            .collect();
+
+        for key in &keys {
+            if let Some(override_entry) = self.models.get(key.as_str()) {
+                if let Some(supports) = override_entry.supports(capability) {
+                    return Some(supports);
+                }
+            }
+        }
+
+        for (key, override_entry) in &self.models {
+            let normalized_key = Self::normalize_bedrock_arn(key).unwrap_or_else(|| key.clone());
+            if normalized_keys.contains(&normalized_key) {
+                if let Some(supports) = override_entry.supports(capability) {
+                    return Some(supports);
+                }
+            }
+        }
+
+        for override_entry in &self.model {
+            if !keys.contains(&override_entry.name) {
+                let normalized_name = Self::normalize_bedrock_arn(&override_entry.name)
+                    .unwrap_or_else(|| override_entry.name.clone());
+                if !normalized_keys.contains(&normalized_name) {
+                    continue;
+                }
+            }
+
+            if let Some(supports) = override_entry.overrides.supports(capability) {
+                return Some(supports);
+            }
+        }
+
+        None
+    }
+
+    fn normalize_bedrock_arn(value: &str) -> Option<String> {
+        let parts: Vec<&str> = value.splitn(6, ':').collect();
+        if parts.len() != 6 {
+            return None;
+        }
+        if parts[0] != "arn" || parts[2] != "bedrock" {
+            return None;
+        }
+
+        let mut normalized: Vec<String> = parts.iter().map(|part| (*part).to_string()).collect();
+        normalized[4].clear();
+        Some(normalized.join(":"))
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NamedModelCapabilityOverride {
+    pub name: String,
+    #[serde(flatten)]
+    pub overrides: ModelCapabilityOverride,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ModelCapabilityOverride {
+    #[serde(default)]
+    pub completion: Option<bool>,
+    #[serde(default)]
+    pub chat: Option<bool>,
+    #[serde(default)]
+    pub embeddings: Option<bool>,
+    #[serde(default)]
+    pub vision: Option<bool>,
+    #[serde(default)]
+    pub tool_use: Option<bool>,
+    #[serde(default)]
+    pub streaming: Option<bool>,
+}
+
+impl ModelCapabilityOverride {
+    fn supports(&self, capability: ModelCapability) -> Option<bool> {
+        match capability {
+            ModelCapability::Completion => self.completion,
+            ModelCapability::Chat => self.chat,
+            ModelCapability::Embeddings => self.embeddings,
+            ModelCapability::Vision => self.vision,
+            ModelCapability::ToolUse => self.tool_use,
+            ModelCapability::Streaming => self.streaming,
+        }
+    }
 }
 
 #[cfg(test)]

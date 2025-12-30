@@ -74,6 +74,7 @@ rustyline = { version = "15", optional = true }
 colored = { version = "3.0.0", optional = true }
 spinners = { version = "4.1", optional = true }
 serde_yaml = "0.9"
+toml = "0.8"
 dirs = "6.0.0"
 either = { version = "1.15.0", features = ["serde"] }
 rodio = { version = "0.20.0", features = ["mp3", "wav"], optional = true }

@@ -11,9 +11,9 @@
 //! cargo run --example bedrock_example --features bedrock
 
 #[cfg(feature = "bedrock")]
-use llm::backends::aws::*;
-#[cfg(feature = "bedrock")]
 use futures::StreamExt;
+#[cfg(feature = "bedrock")]
+use llm::backends::aws::*;
 
 #[cfg(not(feature = "bedrock"))]
 fn main() {
@@ -101,17 +101,15 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("\n--- Vision (Image Analysis) ---");
     // red icon
     let ms_dos_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAIElEQVR4AaTIoQ0AABDCwIb99335eIKjSc3p4HNRGtEAAAD//8uECE8AAAAGSURBVAMAoVsJ2Q2RBWYAAAAASUVORK5CYII=";
-    
+
     use base64::prelude::*;
     let image_bytes = BASE64_STANDARD.decode(ms_dos_base64)?;
 
-    let messages = vec![
-        ChatMessage::user_with_image(
-            "Describe this image.".to_string(),
-            image_bytes,
-            "image/png".to_string(),
-        ),
-    ];
+    let messages = vec![ChatMessage::user_with_image(
+        "Describe this image.".to_string(),
+        image_bytes,
+        "image/png".to_string(),
+    )];
 
     let request = ChatRequest::new(messages)
         .with_model(BedrockModel::eu(CrossRegionModel::ClaudeSonnet4))
@@ -133,7 +131,10 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     match backend.embed_request(request).await {
         Ok(response) => {
-            println!("Generated embedding with dimensions: {}", response.dimensions);
+            println!(
+                "Generated embedding with dimensions: {}",
+                response.dimensions
+            );
             println!("First 5 values: {:?}", &response.embedding[0..5]);
         }
         Err(e) => println!("Embedding error: {:?}", e),

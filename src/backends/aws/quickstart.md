@@ -1,10 +1,7 @@
 # Quick Start Guide - AWS Bedrock Backend
 
-Get up and running with the AWS Bedrock backend in 5 minutes!
-
 ## Prerequisites
 
-- Rust 1.70 or later
 - AWS account with Bedrock access
 - AWS credentials configured
 
@@ -43,7 +40,11 @@ aws_secret_access_key = your_secret
 region = us-east-1
 ```
 
-## Step 3: Write Your First Program
+### Option D: AWS CLI
+
+Login with aws cli, then the SDK will pick up those credentials automatically.
+
+## Step 3: Use it
 
 ```rust
 use fork_llm::backends::bedrock::*;
@@ -63,6 +64,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     Ok(())
 }
+```
+
+Usually, however, you would use the builder:
+
+```rust
+let mut llm = LLMBuilder::new()
+    .backend(LLMBackend::Bedrock)
+    .model(BedrockModel::ClaudeHaiku3)
+    .base_url(region)  // Optional, defaults to AWS_REGION
+    .build();
+
+let response = llm.complete("What is Rust?").await?;
+println!("{}", response.text);
 ```
 
 ## Step 4: Run It
@@ -111,53 +125,32 @@ model.context_window()
 model.max_output_tokens()
 ```
 
-### Simple Q&A
-```rust
-let response = backend.complete(
-    CompletionRequest::new("What is 2+2?")
-        .with_max_tokens(10)
-).await?;
+### External Capability Overrides
+If you need to use models not baked into the crate (or disable tool use on a specific model),
+provide overrides via environment variables.
+
+```bash
+export LLM_BEDROCK_MODEL_CAPABILITIES_PATH=/path/to/bedrock_capabilities.toml
 ```
 
-### Chat Conversation
-```rust
-let messages = vec![
-    ChatMessage::user("Hello!"),
-];
-
-let response = backend.chat(
-    ChatRequest::new(messages)
-        .with_model(BedrockModel::eu(CrossRegionModel::ClaudeSonnet4))
-).await?;
+Example TOML:
+```toml
+[[model]]
+name = "arn:aws:bedrock:eu-central-1:876164100382:inference-profile/eu.anthropic.claude-sonnet-4-20250514-v1:0"
+completion = true
+chat = true
+embeddings = false
+vision = true
+tool_use = true
+streaming = true
 ```
 
-### Image Analysis
-```rust
-let image = std::fs::read("photo.jpg")?;
-
-let messages = vec![
-    ChatMessage::user_with_image(
-        "What's in this image?".to_string(),
-        image,
-        "image/jpeg".to_string(),
-    ),
-];
-
-let response = backend.chat(
-    ChatRequest::new(messages)
-        .with_model(BedrockModel::eu(CrossRegionModel::ClaudeSonnet4))
-).await?;
+Inline config also works:
+```bash
+export LLM_BEDROCK_MODEL_CAPABILITIES=$'[[model]]\nname="arn:aws:bedrock:eu-central-1:876164100382:inference-profile/eu.anthropic.claude-sonnet-4-20250514-v1:0"\ncompletion=true\nchat=true\nembeddings=false\nvision=true\ntool_use=true\nstreaming=true'
 ```
 
-### Generate Embeddings
-```rust
-let response = backend.embed(
-    EmbeddingRequest::new("Hello, world!")
-        .with_model(BedrockModel::Direct(DirectModel::TitanEmbedV2))
-).await?;
-
-println!("Embedding: {:?}", response.embedding);
-```
+Each entry requires `name` (model ID or ARN). Supported keys per model: `completion`, `chat`, `embeddings`, `vision`, `tool_use`, `streaming`.
 
 ## Troubleshooting
 
@@ -170,7 +163,7 @@ println!("Embedding: {:?}", response.embedding);
 - Check model availability: https://docs.aws.amazon.com/bedrock/latest/userguide/models-regions.html
 
 ### Error: AccessDeniedException
-**Solution**: Add Bedrock permissions to your IAM user/role:
+**Solution**: Add Bedrock permissions to your IAM user/role, or the policy the infra is using:
 ```json
 {
   "Version": "2012-10-17",
@@ -184,89 +177,3 @@ println!("Embedding: {:?}", response.embedding);
   }]
 }
 ```
-
-## Example Projects
-
-### Chatbot
-```rust
-let mut conversation = Vec::new();
-
-loop {
-    let user_input = read_user_input();
-    conversation.push(ChatMessage::user(user_input));
-    
-    let response = backend.chat(
-        ChatRequest::new(conversation.clone())
-    ).await?;
-    
-    conversation.push(response.message.clone());
-    
-    // Display response
-    match response.message.content {
-        MessageContent::Text(text) => println!("Bot: {}", text),
-        _ => {}
-    }
-}
-```
-
-### Document Q&A
-```rust
-// Generate embeddings for documents
-let doc_embeddings = vec![];
-for doc in documents {
-    let emb = backend.embed(
-        EmbeddingRequest::new(doc)
-    ).await?;
-    doc_embeddings.push(emb.embedding);
-}
-
-// Find relevant docs for query
-let query_emb = backend.embed(
-    EmbeddingRequest::new(query)
-).await?;
-
-let relevant_docs = find_similar(query_emb, doc_embeddings);
-
-// Answer using relevant context
-let messages = vec![
-    ChatMessage::user(format!(
-        "Context: {}\n\nQuestion: {}",
-        relevant_docs, query
-    )),
-];
-
-let answer = backend.chat(
-    ChatRequest::new(messages)
-).await?;
-```
-
-### Tool-Using Agent
-```rust
-let tools = vec![
-    ToolDefinition {
-        name: "search".to_string(),
-        description: "Search the web".to_string(),
-        input_schema: json!({
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"}
-            }
-        }),
-    },
-];
-
-let response = backend.chat(
-    ChatRequest::new(messages)
-        .with_tools(tools)
-).await?;
-
-// Handle tool use and continue conversation
-```
-
-## Resources
-
-- 📚 [Full Documentation](README.md)
-- 🔧 [Integration Guide](INTEGRATION.md)
-- 💻 [Examples](examples/bedrock_demo.rs)
-- 🧪 [Tests](tests/bedrock_tests.rs)
-- 🌐 [AWS Bedrock Docs](https://docs.aws.amazon.com/bedrock/)

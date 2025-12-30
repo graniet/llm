@@ -164,18 +164,28 @@ impl std::fmt::Display for ChatResponse {
     }
 }
 
-use crate::{chat::{ChatResponse as ChatResponseTrait, Usage}, ToolCall, FunctionCall};
+use crate::{
+    chat::{ChatResponse as ChatResponseTrait, Usage},
+    FunctionCall, ToolCall,
+};
 
 impl ChatResponseTrait for ChatResponse {
     fn text(&self) -> Option<String> {
         match &self.message.content {
             MessageContent::Text(t) => Some(t.clone()),
             MessageContent::MultiModal(parts) => {
-                let texts: Vec<String> = parts.iter().filter_map(|p| match p {
-                    ContentPart::Text { text } => Some(text.clone()),
-                    _ => None,
-                }).collect();
-                if texts.is_empty() { None } else { Some(texts.join("")) }
+                let texts: Vec<String> = parts
+                    .iter()
+                    .filter_map(|p| match p {
+                        ContentPart::Text { text } => Some(text.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                if texts.is_empty() {
+                    None
+                } else {
+                    Some(texts.join(""))
+                }
             }
         }
     }
@@ -184,18 +194,25 @@ impl ChatResponseTrait for ChatResponse {
         match &self.message.content {
             MessageContent::Text(_) => None,
             MessageContent::MultiModal(parts) => {
-                let calls: Vec<ToolCall> = parts.iter().filter_map(|p| match p {
-                    ContentPart::ToolUse { id, name, input } => Some(ToolCall {
-                        id: id.clone(),
-                        function: FunctionCall {
-                            name: name.clone(),
-                            arguments: input.to_string(),
-                        },
-                        call_type: "function".to_string(),
-                    }),
-                    _ => None,
-                }).collect();
-                if calls.is_empty() { None } else { Some(calls) }
+                let calls: Vec<ToolCall> = parts
+                    .iter()
+                    .filter_map(|p| match p {
+                        ContentPart::ToolUse { id, name, input } => Some(ToolCall {
+                            id: id.clone(),
+                            function: FunctionCall {
+                                name: name.clone(),
+                                arguments: input.to_string(),
+                            },
+                            call_type: "function".to_string(),
+                        }),
+                        _ => None,
+                    })
+                    .collect();
+                if calls.is_empty() {
+                    None
+                } else {
+                    Some(calls)
+                }
             }
         }
     }

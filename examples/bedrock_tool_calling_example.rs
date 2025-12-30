@@ -52,9 +52,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }];
 
     // Start conversation
-    let mut messages = vec![
-        ChatMessage::user("What's the weather in London?"),
-    ];
+    let mut messages = vec![ChatMessage::user("What's the weather in London?")];
 
     println!("\nUser: What's the weather in London?");
 
@@ -65,7 +63,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     // First call: Model should request tool use
     let response = backend.chat_request(request).await?;
-    
+
     // Add assistant's response to history
     messages.push(response.message.clone());
 
@@ -73,8 +71,11 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     if let MessageContent::MultiModal(parts) = &response.message.content {
         for part in parts {
             if let ContentPart::ToolUse { id, name, input } = part {
-                println!("Assistant wants to use tool '{}' with input: {}", name, input);
-                
+                println!(
+                    "Assistant wants to use tool '{}' with input: {}",
+                    name, input
+                );
+
                 if name == "get_weather" {
                     // Simulate tool execution
                     println!("Executing tool...");
@@ -82,18 +83,17 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                         "temperature": 15,
                         "unit": "celsius",
                         "condition": "cloudy"
-                    }).to_string();
+                    })
+                    .to_string();
 
                     // Add tool result to history
                     messages.push(ChatMessage {
                         role: "user".to_string(),
-                        content: MessageContent::MultiModal(vec![
-                            ContentPart::ToolResult {
-                                tool_use_id: id.clone(),
-                                content: tool_result,
-                                is_error: false,
-                            }
-                        ]),
+                        content: MessageContent::MultiModal(vec![ContentPart::ToolResult {
+                            tool_use_id: id.clone(),
+                            content: tool_result,
+                            is_error: false,
+                        }]),
                     });
                 }
             }
