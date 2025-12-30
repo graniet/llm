@@ -290,6 +290,21 @@ impl BedrockBackend {
                 bedrock_tools.push(self.convert_tool(&tool)?);
             }
         }
+
+        if let Some(response_format) = self.json_schema.as_ref() {
+            let response_format_value = serde_json::to_value(response_format)
+                .map_err(|e| BedrockError::InvalidRequest(format!("Failed to serialize JSON schema: {:?}", e)))?;
+            let input_schema = ToolInputSchema::Json(Self::value_to_document(&response_format_value));
+        
+            let tool_spec = aws_sdk_bedrockruntime::types::ToolSpecification::builder()
+                .name("json_schema_tool")
+                .description("Generates structured output in JSON format according to the provided schema.")
+                .input_schema(input_schema)
+                .build()
+                .map_err(|e| BedrockError::InvalidRequest(format!("Failed to build tool spec: {:?}", e)))?;
+            
+            bedrock_tools.push(Tool::ToolSpec(tool_spec));
+        }
         
         if let Some(tools) = &self.tools {
             for tool in tools {
