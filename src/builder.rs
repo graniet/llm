@@ -100,6 +100,7 @@ impl std::str::FromStr for LLMBackend {
             "mistral" => Ok(LLMBackend::Mistral),
             "openrouter" => Ok(LLMBackend::OpenRouter),
             "huggingface" => Ok(LLMBackend::HuggingFace),
+            "aws-bedrock" => Ok(LLMBackend::AwsBedrock),
             _ => Err(LLMError::InvalidRequest(format!(
                 "Unknown LLM backend: {s}"
             ))),
