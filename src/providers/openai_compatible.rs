@@ -48,6 +48,8 @@ pub struct OpenAICompatibleProvider<T: OpenAIProviderConfig> {
     pub embedding_dimensions: Option<u32>,
     pub normalize_response: bool,
     pub client: Client,
+    /// Extra HTTP headers to include in all requests
+    pub extra_headers: Option<std::collections::HashMap<String, String>>,
     _phantom: PhantomData<T>,
 }
 
@@ -316,6 +318,7 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
         normalize_response: Option<bool>,
         embedding_encoding_format: Option<String>,
         embedding_dimensions: Option<u32>,
+        extra_headers: Option<std::collections::HashMap<String, String>>,
     ) -> Self {
         let mut builder = Client::builder();
         if let Some(sec) = timeout_seconds {
@@ -347,6 +350,7 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
             embedding_encoding_format,
             embedding_dimensions,
             client: builder.build().expect("Failed to build reqwest Client"),
+            extra_headers,
             _phantom: PhantomData,
         }
     }
@@ -452,6 +456,12 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
         let mut request = self.client.post(url).bearer_auth(&self.api_key).json(&body);
         // Add custom headers if provider specifies them
         if let Some(headers) = T::custom_headers() {
+            for (key, value) in headers {
+                request = request.header(key, value);
+            }
+        }
+        // Add runtime extra headers
+        if let Some(headers) = &self.extra_headers {
             for (key, value) in headers {
                 request = request.header(key, value);
             }
@@ -571,6 +581,12 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
                 request = request.header(key, value);
             }
         }
+        // Add runtime extra headers
+        if let Some(headers) = &self.extra_headers {
+            for (key, value) in headers {
+                request = request.header(key, value);
+            }
+        }
         if log::log_enabled!(log::Level::Trace) {
             if let Ok(json) = serde_json::to_string(&body) {
                 log::trace!("{} request payload: {}", T::PROVIDER_NAME, json);
@@ -663,6 +679,13 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
         let mut request = self.client.post(url).bearer_auth(&self.api_key).json(&body);
 
         if let Some(headers) = T::custom_headers() {
+            for (key, value) in headers {
+                request = request.header(key, value);
+            }
+        }
+
+        // Add runtime extra headers
+        if let Some(headers) = &self.extra_headers {
             for (key, value) in headers {
                 request = request.header(key, value);
             }
@@ -1416,5 +1439,94 @@ mod tests {
             "Expected ToolUseComplete, got {:?}",
             results[0]
         );
+    }
+
+    #[test]
+    fn test_extra_headers_stored_in_provider() {
+        // Test that extra_headers are properly stored in the provider
+        use std::collections::HashMap;
+
+        struct TestConfig;
+        impl OpenAIProviderConfig for TestConfig {
+            const PROVIDER_NAME: &'static str = "Test";
+            const DEFAULT_BASE_URL: &'static str = "https://api.test.com/v1/";
+            const DEFAULT_MODEL: &'static str = "test-model";
+        }
+
+        let mut headers = HashMap::new();
+        headers.insert("CF-Access-Client-Id".to_string(), "test-id".to_string());
+        headers.insert(
+            "CF-Access-Client-Secret".to_string(),
+            "test-secret".to_string(),
+        );
+
+        let provider = OpenAICompatibleProvider::<TestConfig>::new(
+            "test-api-key",
+            None, // base_url
+            None, // model
+            None, // max_tokens
+            None, // temperature
+            None, // timeout_seconds
+            None, // system
+            None, // top_p
+            None, // top_k
+            None, // tools
+            None, // tool_choice
+            None, // reasoning_effort
+            None, // json_schema
+            None, // voice
+            None, // extra_body
+            None, // parallel_tool_calls
+            None, // normalize_response
+            None, // embedding_encoding_format
+            None, // embedding_dimensions
+            Some(headers.clone()),
+        );
+
+        assert!(provider.extra_headers.is_some());
+        let stored_headers = provider.extra_headers.unwrap();
+        assert_eq!(
+            stored_headers.get("CF-Access-Client-Id"),
+            Some(&"test-id".to_string())
+        );
+        assert_eq!(
+            stored_headers.get("CF-Access-Client-Secret"),
+            Some(&"test-secret".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extra_headers_none_when_not_provided() {
+        struct TestConfig;
+        impl OpenAIProviderConfig for TestConfig {
+            const PROVIDER_NAME: &'static str = "Test";
+            const DEFAULT_BASE_URL: &'static str = "https://api.test.com/v1/";
+            const DEFAULT_MODEL: &'static str = "test-model";
+        }
+
+        let provider = OpenAICompatibleProvider::<TestConfig>::new(
+            "test-api-key",
+            None, // base_url
+            None, // model
+            None, // max_tokens
+            None, // temperature
+            None, // timeout_seconds
+            None, // system
+            None, // top_p
+            None, // top_k
+            None, // tools
+            None, // tool_choice
+            None, // reasoning_effort
+            None, // json_schema
+            None, // voice
+            None, // extra_body
+            None, // parallel_tool_calls
+            None, // normalize_response
+            None, // embedding_encoding_format
+            None, // embedding_dimensions
+            None, // extra_headers
+        );
+
+        assert!(provider.extra_headers.is_none());
     }
 }

@@ -73,6 +73,7 @@ impl HuggingFace {
             normalize_response,
             None, // embedding_encoding_format
             None, // embedding_dimensions
+            None, // extra_headers - not exposed via HuggingFace wrapper
         )
     }
 }
