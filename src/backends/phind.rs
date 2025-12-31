@@ -22,6 +22,7 @@ use reqwest::{Client, Response};
 use serde_json::{json, Value};
 
 /// Represents a Phind LLM client with configuration options.
+#[derive(Clone)]
 pub struct Phind {
     /// The model identifier to use (e.g. "Phind-70B")
     pub model: String,
@@ -90,6 +91,34 @@ impl Phind {
             top_k,
             api_base_url: "https://https.extension.phind.com/agent/".to_string(),
             client: builder.build().expect("Failed to build reqwest Client"),
+        }
+    }
+
+    /// Creates a new Phind client with a pre-configured HTTP client.
+    ///
+    /// This allows sharing a single `reqwest::Client` across multiple providers,
+    /// enabling connection pooling and reducing resource usage.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_client(
+        client: Client,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<String>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+    ) -> Self {
+        Self {
+            model: model.unwrap_or_else(|| "Phind-70B".to_string()),
+            max_tokens,
+            temperature,
+            system,
+            timeout_seconds,
+            top_p,
+            top_k,
+            api_base_url: "https://https.extension.phind.com/agent/".to_string(),
+            client,
         }
     }
 

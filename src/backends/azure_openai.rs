@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 /// Client for interacting with Azure OpenAI's API.
 ///
 /// Provides methods for chat and completion requests using Azure OpenAI's models.
+#[derive(Clone)]
 pub struct AzureOpenAI {
     pub api_key: String,
     pub api_version: String,
@@ -377,6 +378,56 @@ impl AzureOpenAI {
             embedding_encoding_format,
             embedding_dimensions,
             client: builder.build().expect("Failed to build reqwest Client"),
+            reasoning_effort,
+            json_schema,
+        }
+    }
+
+    /// Creates a new Azure OpenAI client with a pre-configured HTTP client.
+    ///
+    /// This allows sharing a single `reqwest::Client` across multiple providers,
+    /// enabling connection pooling and reducing resource usage.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_client(
+        client: Client,
+        api_key: impl Into<String>,
+        api_version: impl Into<String>,
+        deployment_id: impl Into<String>,
+        endpoint: impl Into<String>,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<String>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+        embedding_encoding_format: Option<String>,
+        embedding_dimensions: Option<u32>,
+        tools: Option<Vec<Tool>>,
+        tool_choice: Option<ToolChoice>,
+        reasoning_effort: Option<String>,
+        json_schema: Option<StructuredOutputFormat>,
+    ) -> Self {
+        let endpoint = endpoint.into();
+        let deployment_id = deployment_id.into();
+
+        Self {
+            api_key: api_key.into(),
+            api_version: api_version.into(),
+            base_url: Url::parse(&format!("{endpoint}/openai/deployments/{deployment_id}/"))
+                .expect("Failed to parse base Url"),
+            model: model.unwrap_or("gpt-3.5-turbo".to_string()),
+            max_tokens,
+            temperature,
+            system,
+            timeout_seconds,
+            top_p,
+            top_k,
+            tools,
+            tool_choice,
+            embedding_encoding_format,
+            embedding_dimensions,
+            client,
             reasoning_effort,
             json_schema,
         }

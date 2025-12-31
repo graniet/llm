@@ -29,6 +29,7 @@ use serde_json::Value;
 /// Client for interacting with Ollama's API.
 ///
 /// Provides methods for chat and completion requests using Ollama's models.
+#[derive(Clone)]
 pub struct Ollama {
     pub base_url: String,
     pub api_key: Option<String>,
@@ -334,6 +335,41 @@ impl Ollama {
             json_schema,
             tools,
             client: builder.build().expect("Failed to build reqwest Client"),
+        }
+    }
+
+    /// Creates a new Ollama client with a pre-configured HTTP client.
+    ///
+    /// This allows sharing a single `reqwest::Client` across multiple providers,
+    /// enabling connection pooling and reducing resource usage.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_client(
+        client: Client,
+        base_url: impl Into<String>,
+        api_key: Option<String>,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<String>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+        json_schema: Option<StructuredOutputFormat>,
+        tools: Option<Vec<Tool>>,
+    ) -> Self {
+        Self {
+            base_url: base_url.into(),
+            api_key,
+            model: model.unwrap_or("llama3.1".to_string()),
+            temperature,
+            max_tokens,
+            timeout_seconds,
+            system,
+            top_p,
+            top_k,
+            json_schema,
+            tools,
+            client,
         }
     }
 

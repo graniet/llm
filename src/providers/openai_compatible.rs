@@ -27,6 +27,7 @@ use std::pin::Pin;
 ///
 /// This struct provides a base implementation for any OpenAI-compatible API.
 /// Different providers can customize behavior by implementing the `OpenAICompatibleConfig` trait.
+#[derive(Clone)]
 pub struct OpenAICompatibleProvider<T: OpenAIProviderConfig> {
     pub api_key: String,
     pub base_url: Url,
@@ -347,6 +348,68 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
             embedding_encoding_format,
             embedding_dimensions,
             client: builder.build().expect("Failed to build reqwest Client"),
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Creates a new provider with a pre-configured HTTP client.
+    ///
+    /// This allows sharing a single `reqwest::Client` across multiple providers,
+    /// enabling connection pooling and reducing resource usage.
+    ///
+    /// # Arguments
+    ///
+    /// * `client` - A pre-configured `reqwest::Client` to use for HTTP requests
+    /// * Other arguments are the same as `new()`
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_client(
+        client: Client,
+        api_key: impl Into<String>,
+        base_url: Option<String>,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<String>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+        tools: Option<Vec<Tool>>,
+        tool_choice: Option<ToolChoice>,
+        reasoning_effort: Option<String>,
+        json_schema: Option<StructuredOutputFormat>,
+        voice: Option<String>,
+        extra_body: Option<serde_json::Value>,
+        parallel_tool_calls: Option<bool>,
+        normalize_response: Option<bool>,
+        embedding_encoding_format: Option<String>,
+        embedding_dimensions: Option<u32>,
+    ) -> Self {
+        let extra_body = match extra_body {
+            Some(serde_json::Value::Object(map)) => map,
+            _ => serde_json::Map::new(),
+        };
+        Self {
+            api_key: api_key.into(),
+            base_url: Url::parse(&format!("{}/", base_url.unwrap_or_else(|| T::DEFAULT_BASE_URL.to_owned()).trim_end_matches("/")))
+                .expect("Failed to parse base URL"),
+            model: model.unwrap_or_else(|| T::DEFAULT_MODEL.to_string()),
+            max_tokens,
+            temperature,
+            system,
+            timeout_seconds,
+            top_p,
+            top_k,
+            tools,
+            tool_choice,
+            reasoning_effort,
+            json_schema,
+            voice,
+            extra_body,
+            parallel_tool_calls: parallel_tool_calls.unwrap_or(false),
+            normalize_response: normalize_response.unwrap_or(true),
+            embedding_encoding_format,
+            embedding_dimensions,
+            client,
             _phantom: PhantomData,
         }
     }
@@ -1416,5 +1479,116 @@ mod tests {
             "Expected ToolUseComplete, got {:?}",
             results[0]
         );
+    }
+
+    /// Test config for Clone tests
+    #[derive(Clone)]
+    struct TestConfig;
+
+    impl OpenAIProviderConfig for TestConfig {
+        const PROVIDER_NAME: &'static str = "Test";
+        const DEFAULT_BASE_URL: &'static str = "https://api.test.com/v1/";
+        const DEFAULT_MODEL: &'static str = "test-model";
+        const SUPPORTS_REASONING_EFFORT: bool = false;
+        const SUPPORTS_STRUCTURED_OUTPUT: bool = true;
+        const SUPPORTS_PARALLEL_TOOL_CALLS: bool = false;
+    }
+
+    #[test]
+    fn test_openai_compatible_provider_clone() {
+        let provider = OpenAICompatibleProvider::<TestConfig>::new(
+            "test-api-key",
+            None,
+            Some("gpt-4".to_string()),
+            Some(1000),
+            Some(0.7),
+            Some(30),
+            Some("You are helpful.".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        // Clone the provider
+        let cloned = provider.clone();
+
+        // Verify both have the same configuration
+        assert_eq!(provider.api_key, cloned.api_key);
+        assert_eq!(provider.model, cloned.model);
+        assert_eq!(provider.max_tokens, cloned.max_tokens);
+        assert_eq!(provider.temperature, cloned.temperature);
+        assert_eq!(provider.system, cloned.system);
+    }
+
+    #[test]
+    fn test_openai_compatible_provider_with_client() {
+        let shared_client = Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .expect("Failed to build client");
+
+        let provider = OpenAICompatibleProvider::<TestConfig>::with_client(
+            shared_client.clone(),
+            "test-api-key",
+            None,
+            Some("gpt-4".to_string()),
+            Some(1000),
+            Some(0.7),
+            Some(30),
+            Some("You are helpful.".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        // Verify configuration
+        assert_eq!(provider.api_key, "test-api-key");
+        assert_eq!(provider.model, "gpt-4");
+        assert_eq!(provider.max_tokens, Some(1000));
+
+        // Create another provider with the same client
+        let provider2 = OpenAICompatibleProvider::<TestConfig>::with_client(
+            shared_client,
+            "test-api-key-2",
+            None,
+            Some("gpt-3.5-turbo".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(provider2.api_key, "test-api-key-2");
+        assert_eq!(provider2.model, "gpt-3.5-turbo");
     }
 }

@@ -66,6 +66,7 @@ use serde_json::Value;
 ///
 /// This struct holds the configuration and state needed to make requests to the Gemini API.
 /// It implements the [`ChatProvider`], [`CompletionProvider`], and [`EmbeddingProvider`] traits.
+#[derive(Clone)]
 pub struct Google {
     /// API key for authentication with Google's API
     pub api_key: String,
@@ -512,6 +513,39 @@ impl Google {
             json_schema,
             tools,
             client: builder.build().expect("Failed to build reqwest Client"),
+        }
+    }
+
+    /// Creates a new Google client with a pre-configured HTTP client.
+    ///
+    /// This allows sharing a single `reqwest::Client` across multiple providers,
+    /// enabling connection pooling and reducing resource usage.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_client(
+        client: Client,
+        api_key: impl Into<String>,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<String>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+        json_schema: Option<StructuredOutputFormat>,
+        tools: Option<Vec<Tool>>,
+    ) -> Self {
+        Self {
+            api_key: api_key.into(),
+            model: model.unwrap_or_else(|| "gemini-1.5-flash".to_string()),
+            max_tokens,
+            temperature,
+            system,
+            timeout_seconds,
+            top_p,
+            top_k,
+            json_schema,
+            tools,
+            client,
         }
     }
 }

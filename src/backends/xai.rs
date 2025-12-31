@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// This struct provides methods for making chat and completion requests to X.AI's language models.
 /// It handles authentication, request configuration, and response parsing.
+#[derive(Clone)]
 pub struct XAI {
     /// API key for authentication with X.AI services
     pub api_key: String,
@@ -297,6 +298,53 @@ impl XAI {
             xai_search_from_date,
             xai_search_to_date,
             client: builder.build().expect("Failed to build reqwest Client"),
+        }
+    }
+
+    /// Creates a new X.AI client with a pre-configured HTTP client.
+    ///
+    /// This allows sharing a single `reqwest::Client` across multiple providers,
+    /// enabling connection pooling and reducing resource usage.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_client(
+        client: Client,
+        api_key: impl Into<String>,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<String>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+        embedding_encoding_format: Option<String>,
+        embedding_dimensions: Option<u32>,
+        json_schema: Option<StructuredOutputFormat>,
+        xai_search_mode: Option<String>,
+        xai_search_source_type: Option<String>,
+        xai_search_excluded_websites: Option<Vec<String>>,
+        xai_search_max_results: Option<u32>,
+        xai_search_from_date: Option<String>,
+        xai_search_to_date: Option<String>,
+    ) -> Self {
+        Self {
+            api_key: api_key.into(),
+            model: model.unwrap_or("grok-2-latest".to_string()),
+            max_tokens,
+            temperature,
+            system,
+            timeout_seconds,
+            top_p,
+            top_k,
+            embedding_encoding_format,
+            embedding_dimensions,
+            json_schema,
+            xai_search_mode,
+            xai_search_source_type,
+            xai_search_excluded_websites,
+            xai_search_max_results,
+            xai_search_from_date,
+            xai_search_to_date,
+            client,
         }
     }
 }
