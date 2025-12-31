@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::pin::Pin;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::stream::{Stream, StreamExt};
@@ -8,6 +9,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{error::LLMError, ToolCall};
+
+mod tracked;
+pub use tracked::{Trackable, Tracked};
 
 /// Usage metadata for a chat response.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,6 +129,54 @@ pub struct PromptTokensDetails {
     /// Tokens used for audio input
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_tokens: Option<u32>,
+}
+
+/// Comprehensive metrics for a chat request including timing and token usage.
+///
+/// This struct is returned by `ChatResponse::metrics()` when metrics collection
+/// is enabled, or by `Tracked::finalize()` for streaming responses.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// // Non-streaming with metrics enabled
+/// let response = llm.chat("Hello").await?;
+/// if let Some(metrics) = response.metrics() {
+///     println!("Duration: {:?}", metrics.duration);
+///     println!("Tokens: {:?}", metrics.usage);
+///     println!("Tokens/sec: {:?}", metrics.tokens_per_second());
+/// }
+///
+/// // Streaming with Tracked wrapper
+/// let stream = llm.chat_stream_with_tools(messages, None).await?;
+/// let mut tracked = Tracked::new(stream);
+/// while let Some(chunk) = tracked.next().await { /* ... */ }
+/// let metrics = tracked.finalize();
+/// println!("TTFT: {:?}", metrics.time_to_first_token);
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct ChatMetrics {
+    /// Token usage (prompt, completion, total)
+    pub usage: Option<Usage>,
+    /// Total wall-clock duration of the request
+    pub duration: Duration,
+    /// Time to first token (streaming only, None for non-streaming)
+    pub time_to_first_token: Option<Duration>,
+}
+
+impl ChatMetrics {
+    /// Calculate tokens per second (completion tokens / duration).
+    ///
+    /// Returns `None` if usage data is unavailable or duration is zero.
+    pub fn tokens_per_second(&self) -> Option<f64> {
+        let usage = self.usage.as_ref()?;
+        let secs = self.duration.as_secs_f64();
+        if secs > 0.0 {
+            Some(usage.completion_tokens as f64 / secs)
+        } else {
+            None
+        }
+    }
 }
 
 /// Role of a participant in a chat conversation.
@@ -356,13 +408,34 @@ impl Serialize for ToolChoice {
     }
 }
 
+/// Trait for chat response types returned by providers.
+///
+/// Provides access to the response content, tool calls, usage statistics,
+/// and optional metrics when enabled.
 pub trait ChatResponse: std::fmt::Debug + std::fmt::Display + Send + Sync {
+    /// Returns the text content of the response, if any.
     fn text(&self) -> Option<String>;
+
+    /// Returns tool calls requested by the model, if any.
     fn tool_calls(&self) -> Option<Vec<ToolCall>>;
+
+    /// Returns the model's thinking/reasoning output, if available.
     fn thinking(&self) -> Option<String> {
         None
     }
+
+    /// Returns token usage statistics, if available.
     fn usage(&self) -> Option<Usage> {
+        None
+    }
+
+    /// Returns comprehensive metrics including timing and usage.
+    ///
+    /// This method returns `Some` only when metrics collection is enabled
+    /// via `.enable_metrics(true)` on the builder. Otherwise returns `None`.
+    ///
+    /// For streaming responses, use `Tracked::finalize()` instead.
+    fn metrics(&self) -> Option<ChatMetrics> {
         None
     }
 }

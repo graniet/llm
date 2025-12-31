@@ -13,6 +13,51 @@
 //! - Embeddings generation
 //! - Multiple providers (OpenAI, Anthropic, Google, etc.)
 //! - Request validation and retry logic
+//! - **Metrics collection** (timing, token usage) for performance monitoring
+//!
+//! ## Metrics Collection
+//!
+//! The library provides opt-in metrics collection for measuring request timing and token usage.
+//!
+//! ### Non-Streaming Requests
+//!
+//! Enable metrics via the builder:
+//!
+//! ```rust,ignore
+//! use llm::builder::{LLMBuilder, LLMBackend};
+//!
+//! let llm = LLMBuilder::new()
+//!     .backend(LLMBackend::OpenAI)
+//!     .api_key("...")
+//!     .enable_metrics(true)  // Enable metrics
+//!     .build()?;
+//!
+//! let response = llm.chat("Hello").await?;
+//! if let Some(metrics) = response.metrics() {
+//!     println!("Duration: {:?}", metrics.duration);
+//!     println!("Tokens/sec: {:?}", metrics.tokens_per_second());
+//! }
+//! ```
+//!
+//! ### Streaming Requests
+//!
+//! Use the [`Tracked`] wrapper around any stream:
+//!
+//! ```rust,ignore
+//! use llm::Tracked;
+//! use futures::StreamExt;
+//!
+//! let stream = llm.chat_stream_with_tools(messages, None).await?;
+//! let mut tracked = Tracked::new(stream);
+//!
+//! while let Some(chunk) = tracked.next().await {
+//!     // Process chunk...
+//! }
+//!
+//! let metrics = tracked.finalize();
+//! println!("Time to first token: {:?}", metrics.time_to_first_token);
+//! println!("Total duration: {:?}", metrics.duration);
+//! ```
 //!
 //! ## Examples
 //!
@@ -24,6 +69,10 @@
 
 // Re-export for convenience
 pub use async_trait::async_trait;
+
+// Re-export metrics types for easy access
+pub use chat::{ChatMetrics, Trackable, Tracked};
+pub use metrics::MetricsProvider;
 
 use chat::Tool;
 use serde::{Deserialize, Serialize};
@@ -54,6 +103,9 @@ pub mod error;
 
 /// Validation wrapper for LLM providers with retry capabilities
 pub mod validated_llm;
+
+/// Metrics wrapper for LLM providers (timing, usage tracking)
+pub mod metrics;
 
 /// Resilience wrapper (retry/backoff) for LLM providers
 pub mod resilient_llm;
