@@ -8,7 +8,7 @@ mod bedrock_tests {
     use aws_config::{load_defaults, BehaviorVersion};
     use aws_credential_types::provider::ProvideCredentials;
     use llm::backends::aws::*;
-    use llm::chat::StructuredOutputFormat;
+    use llm::chat::{StreamChunk, StructuredOutputFormat};
     use serde_json::json;
 
     // Helper to check if AWS credentials are available
@@ -306,6 +306,71 @@ mod bedrock_tests {
             }
             _ => panic!("Expected multimodal content with tool use"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_streaming_chat_with_tools() {
+        if skip_if_no_credentials().await {
+            println!("Skipping test: no AWS credentials");
+            return;
+        }
+
+        let backend = BedrockBackend::from_env().await.unwrap();
+
+        let tools = vec![ToolDefinition {
+            name: "get_weather".to_string(),
+            description: "Get the current weather for a location".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "The city and state, e.g. San Francisco, CA"
+                    }
+                },
+                "required": ["location"]
+            }),
+        }];
+
+        let messages = vec![ChatMessage::user(
+            "What's the weather in San Francisco? Use get_weather to answer.",
+        )];
+
+        let request = ChatRequest::new(messages)
+            .with_model(BedrockModel::eu(CrossRegionModel::ClaudeSonnet4))
+            .with_tools(tools)
+            .with_max_tokens(500);
+
+        let stream = backend.chat_stream_with_tools(request).await;
+        assert!(
+            stream.is_ok(),
+            "Streaming tool use chat failed: {:?}",
+            stream.err()
+        );
+
+        use futures::StreamExt;
+        let stream = stream.unwrap();
+        futures::pin_mut!(stream);
+        let mut saw_tool_call = false;
+
+        while let Some(chunk_result) = stream.next().await {
+            assert!(chunk_result.is_ok());
+            match chunk_result.unwrap() {
+                StreamChunk::ToolUseComplete { tool_call, .. } => {
+                    if tool_call.function.name == "get_weather" {
+                        saw_tool_call = true;
+                    }
+                }
+                StreamChunk::ToolUseStart { name, .. } => {
+                    if name == "get_weather" {
+                        saw_tool_call = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        assert!(saw_tool_call, "Expected streaming tool use for get_weather");
     }
 
     #[tokio::test]

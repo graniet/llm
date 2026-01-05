@@ -10,16 +10,16 @@ use async_trait::async_trait;
 use aws_config::BehaviorVersion;
 use aws_sdk_bedrockruntime::{
     types::{
-        CachePointBlock, CachePointType, ContentBlock, ContentBlockDelta, ConversationRole,
-        ConverseStreamOutput, Message, SystemContentBlock, Tool, ToolConfiguration,
-        ToolInputSchema, ToolResultBlock, ToolResultContentBlock, ToolUseBlock,
+        CachePointBlock, CachePointType, ContentBlock, ContentBlockDelta, ContentBlockStart, ConversationRole, ConverseStreamOutput,
+        Message, SystemContentBlock, Tool, ToolConfiguration, ToolInputSchema, ToolResultBlock,
+        ToolResultContentBlock, ToolUseBlock,
     },
     Client as BedrockClient,
 };
 use aws_smithy_types::{Blob, Document};
 use futures::{Stream, StreamExt};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::fs;
 use std::pin::Pin;
@@ -27,7 +27,8 @@ use std::sync::Arc;
 use tokio::sync::OnceCell;
 
 use crate::chat::{
-    ChatMessage as LlmChatMessage, ChatProvider, StructuredOutputFormat, Tool as LlmTool,
+    ChatMessage as LlmChatMessage, ChatProvider, StreamChunk as LlmStreamChunk, StreamChoice,
+    StreamDelta, StreamResponse, StructuredOutputFormat, Tool as LlmTool,
     ToolChoice as LlmToolChoice,
 };
 use crate::completion::{
@@ -38,7 +39,7 @@ use crate::embedding::EmbeddingProvider;
 use crate::models::ModelsProvider;
 use crate::stt::SpeechToTextProvider;
 use crate::tts::TextToSpeechProvider;
-use crate::LLMProvider;
+use crate::{FunctionCall, ToolCall, LLMProvider};
 
 mod error;
 mod models;
@@ -80,6 +81,32 @@ struct PreparedChatRequest {
     system: Option<SystemContentBlock>,
     tool_config: Option<ToolConfiguration>,
     inference_config: aws_sdk_bedrockruntime::types::InferenceConfiguration,
+}
+
+#[derive(Debug, Default, Clone)]
+struct BedrockToolUseState {
+    id: String,
+    name: String,
+    input_buffer: String,
+    started: bool,
+}
+
+impl BedrockToolUseState {
+    fn to_tool_call(&self) -> ToolCall {
+        let arguments = if self.input_buffer.is_empty() {
+            "{}".to_string()
+        } else {
+            self.input_buffer.clone()
+        };
+        ToolCall {
+            id: self.id.clone(),
+            call_type: "function".to_string(),
+            function: FunctionCall {
+                name: self.name.clone(),
+                arguments,
+            },
+        }
+    }
 }
 
 impl BedrockBackend {
@@ -241,6 +268,7 @@ impl BedrockBackend {
                 .set_max_tokens(request.max_tokens.or(self.max_tokens).map(|t| t as i32))
                 .set_temperature(request.temperature.map(|t| t as f32).or(self.temperature))
                 .set_top_p(request.top_p.map(|p| p as f32).or(self.top_p))
+
                 .set_stop_sequences(request.stop_sequences)
                 .build(),
         );
@@ -547,6 +575,150 @@ impl BedrockBackend {
                 }
             }
         }))
+    }
+
+    /// Stream chat responses with tool call events.
+    pub async fn chat_stream_with_tools(
+        &self,
+        request: ChatRequest,
+    ) -> Result<impl futures::Stream<Item = Result<LlmStreamChunk>>> {
+        let client = self.get_client().await?;
+        let PreparedChatRequest {
+            model_id_str,
+            model: _,
+            messages,
+            system,
+            tool_config,
+            inference_config,
+        } = self.prepare_chat_request(request)?;
+
+        let mut converse_request = client
+            .converse_stream()
+            .model_id(model_id_str)
+            .set_messages(Some(messages));
+
+        if let Some(system) = system {
+            converse_request = converse_request.system(system);
+        }
+
+        if let Some(tool_config) = tool_config {
+            converse_request = converse_request.tool_config(tool_config);
+        }
+
+        converse_request = converse_request.inference_config(inference_config);
+
+        let response = converse_request
+            .send()
+            .await
+            .map_err(|e| BedrockError::ApiError(format!("{:?}", e)))?;
+
+        let stream = response.stream;
+
+        let initial_state = (
+            stream,
+            HashMap::<usize, BedrockToolUseState>::new(),
+            VecDeque::<LlmStreamChunk>::new(),
+        );
+
+        Ok(futures::stream::unfold(
+            initial_state,
+            |(mut stream, mut tool_states, mut pending)| async move {
+                loop {
+                    if let Some(chunk) = pending.pop_front() {
+                        return Some((Ok(chunk), (stream, tool_states, pending)));
+                    }
+
+                    let next_item = stream.recv().await;
+                    match next_item {
+                        Ok(Some(event)) => match event {
+                            ConverseStreamOutput::ContentBlockStart(start) => {
+                                if let Some(ContentBlockStart::ToolUse(tool_use)) = start.start {
+                                    let index =
+                                        usize::try_from(start.content_block_index).unwrap_or(0);
+                                    let state = tool_states.entry(index).or_default();
+                                    state.id = tool_use.tool_use_id().to_string();
+                                    state.name = tool_use.name().to_string();
+                                    if !state.started {
+                                        state.started = true;
+                                        pending.push_back(LlmStreamChunk::ToolUseStart {
+                                            index,
+                                            id: state.id.clone(),
+                                            name: state.name.clone(),
+                                        });
+                                    }
+                                }
+                            }
+                            ConverseStreamOutput::ContentBlockDelta(delta) => match delta.delta {
+                                Some(ContentBlockDelta::Text(text)) => {
+                                    if !text.is_empty() {
+                                        pending.push_back(LlmStreamChunk::Text(text));
+                                    }
+                                }
+                                Some(ContentBlockDelta::ToolUse(tool_use)) => {
+                                    let index =
+                                        usize::try_from(delta.content_block_index).unwrap_or(0);
+                                    let state = tool_states.entry(index).or_default();
+                                    if !tool_use.input.is_empty() {
+                                        state.input_buffer.push_str(&tool_use.input);
+                                        pending.push_back(LlmStreamChunk::ToolUseInputDelta {
+                                            index,
+                                            partial_json: tool_use.input,
+                                        });
+                                    }
+                                }
+                                _ => {}
+                            },
+                            ConverseStreamOutput::ContentBlockStop(stop) => {
+                                let index =
+                                    usize::try_from(stop.content_block_index).unwrap_or(0);
+                                if let Some(state) = tool_states.remove(&index) {
+                                    if state.started {
+                                        pending.push_back(LlmStreamChunk::ToolUseComplete {
+                                            index,
+                                            tool_call: state.to_tool_call(),
+                                        });
+                                    }
+                                }
+                            }
+                            ConverseStreamOutput::MessageStop(stop) => {
+                                for (index, state) in tool_states.drain() {
+                                    if state.started {
+                                        pending.push_back(LlmStreamChunk::ToolUseComplete {
+                                            index,
+                                            tool_call: state.to_tool_call(),
+                                        });
+                                    }
+                                }
+                                pending.push_back(LlmStreamChunk::Done {
+                                    stop_reason: stop.stop_reason.as_str().to_string(),
+                                });
+                            }
+                            _ => {}
+                        },
+                        Ok(None) => {
+                            for (index, state) in tool_states.drain() {
+                                if state.started {
+                                    pending.push_back(LlmStreamChunk::ToolUseComplete {
+                                        index,
+                                        tool_call: state.to_tool_call(),
+                                    });
+                                }
+                            }
+                            if let Some(chunk) = pending.pop_front() {
+                                return Some((Ok(chunk), (stream, tool_states, pending)));
+                            }
+                            return None;
+                        }
+                        Err(e) => {
+                            return Some((
+                                Err(BedrockError::StreamError(format!("{:?}", e))),
+                                (stream, tool_states, pending),
+                            ))
+                        }
+                    }
+                }
+            },
+        ))
     }
 
     // Helper methods
@@ -1207,6 +1379,146 @@ impl ChatProvider for BedrockBackend {
 
         Ok(Box::pin(stream))
     }
+
+    async fn chat_stream_struct(
+        &self,
+        messages: &[LlmChatMessage],
+    ) -> std::result::Result<
+        Pin<Box<dyn Stream<Item = std::result::Result<StreamResponse, crate::error::LLMError>> + Send>>,
+        crate::error::LLMError,
+    > {
+        let aws_messages: Vec<ChatMessage> = messages
+            .iter()
+            .map(|m| {
+                let role = match m.role {
+                    crate::chat::ChatRole::User => "user",
+                    crate::chat::ChatRole::Assistant => "assistant",
+                };
+
+                let content = match &m.message_type {
+                    crate::chat::MessageType::Text => MessageContent::Text(m.content.clone()),
+                    crate::chat::MessageType::Image((mime, bytes)) => {
+                        MessageContent::MultiModal(vec![
+                            ContentPart::Text {
+                                text: m.content.clone(),
+                            },
+                            ContentPart::Image {
+                                source: bytes.clone(),
+                                media_type: mime.mime_type().to_string(),
+                            },
+                        ])
+                    }
+                    _ => MessageContent::Text(m.content.clone()),
+                };
+
+                ChatMessage {
+                    role: role.to_string(),
+                    content,
+                }
+            })
+            .collect();
+
+        let request = ChatRequest::new(aws_messages);
+        let stream = BedrockBackend::chat_stream_with_tools(self, request)
+            .await
+            .map_err(|e| crate::error::LLMError::ProviderError(e.to_string()))?;
+
+        let stream = stream.filter_map(|item| async move {
+            match item {
+                Ok(LlmStreamChunk::Text(text)) => Some(Ok(StreamResponse {
+                    choices: vec![StreamChoice {
+                        delta: StreamDelta {
+                            content: Some(text),
+                            tool_calls: None,
+                        },
+                    }],
+                    usage: None,
+                })),
+                Ok(LlmStreamChunk::ToolUseComplete { tool_call, .. }) => {
+                    Some(Ok(StreamResponse {
+                        choices: vec![StreamChoice {
+                            delta: StreamDelta {
+                                content: None,
+                                tool_calls: Some(vec![tool_call]),
+                            },
+                        }],
+                        usage: None,
+                    }))
+                }
+                Ok(LlmStreamChunk::Done { .. }) => None,
+                Ok(_) => None,
+                Err(e) => Some(Err(crate::error::LLMError::ProviderError(e.to_string()))),
+            }
+        });
+
+        Ok(Box::pin(stream))
+    }
+
+    async fn chat_stream_with_tools(
+        &self,
+        messages: &[LlmChatMessage],
+        tools: Option<&[LlmTool]>,
+    ) -> std::result::Result<
+        Pin<Box<dyn Stream<Item = std::result::Result<LlmStreamChunk, crate::error::LLMError>> + Send>>,
+        crate::error::LLMError,
+    > {
+        let aws_messages: Vec<ChatMessage> = messages
+            .iter()
+            .map(|m| {
+                let role = match m.role {
+                    crate::chat::ChatRole::User => "user",
+                    crate::chat::ChatRole::Assistant => "assistant",
+                };
+
+                let content = match &m.message_type {
+                    crate::chat::MessageType::Text => MessageContent::Text(m.content.clone()),
+                    crate::chat::MessageType::Image((mime, bytes)) => {
+                        MessageContent::MultiModal(vec![
+                            ContentPart::Text {
+                                text: m.content.clone(),
+                            },
+                            ContentPart::Image {
+                                source: bytes.clone(),
+                                media_type: mime.mime_type().to_string(),
+                            },
+                        ])
+                    }
+                    _ => MessageContent::Text(m.content.clone()),
+                };
+
+                ChatMessage {
+                    role: role.to_string(),
+                    content,
+                }
+            })
+            .collect();
+
+        let mut request = ChatRequest::new(aws_messages);
+
+        if let Some(tools) = tools {
+            let tool_defs: Vec<ToolDefinition> = tools
+                .iter()
+                .map(|t| ToolDefinition {
+                    name: t.function.name.clone(),
+                    description: t.function.description.clone(),
+                    input_schema: t.function.parameters.clone(),
+                })
+                .collect();
+
+            request = request.with_tools(tool_defs);
+        }
+
+        let stream = BedrockBackend::chat_stream_with_tools(self, request)
+            .await
+            .map_err(|e| crate::error::LLMError::ProviderError(e.to_string()))?;
+
+        let stream = stream.map(|item| match item {
+            Ok(chunk) => Ok(chunk),
+            Err(e) => Err(crate::error::LLMError::ProviderError(e.to_string())),
+        });
+
+        Ok(Box::pin(stream))
+    }
 }
 
 #[async_trait]
@@ -1414,5 +1726,18 @@ streaming = true
         assert_eq!(tools.len(), 2);
         assert!(matches!(tools[0], Tool::ToolSpec(_)));
         assert!(matches!(tools[1], Tool::CachePoint(_)));
+    }
+
+    #[test]
+    fn test_tool_use_state_defaults_empty_arguments() {
+        let state = BedrockToolUseState {
+            id: "tooluse_1".to_string(),
+            name: "get_servers".to_string(),
+            ..Default::default()
+        };
+
+        let tool_call = state.to_tool_call();
+
+        assert_eq!(tool_call.function.arguments, "{}");
     }
 }
