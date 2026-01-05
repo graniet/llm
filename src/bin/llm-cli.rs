@@ -175,6 +175,7 @@ fn get_api_key(backend: &LLMBackend, args: &CliArgs) -> Option<String> {
                 .get("HF_TOKEN")
                 .cloned()
                 .or_else(|| std::env::var("HF_TOKEN").ok()),
+            LLMBackend::AwsBedrock => None,
         }
     })
 }
