@@ -2,6 +2,8 @@
 //!
 //! This module provides integration with DeepSeek's models through their API.
 
+use std::sync::Arc;
+
 use crate::chat::{ChatResponse, Tool};
 #[cfg(feature = "deepseek")]
 use crate::{
@@ -21,14 +23,32 @@ use serde::{Deserialize, Serialize};
 
 use crate::ToolCall;
 
-pub struct DeepSeek {
+/// Configuration for the DeepSeek client.
+#[derive(Debug)]
+pub struct DeepSeekConfig {
+    /// API key for authentication with DeepSeek.
     pub api_key: String,
+    /// Model identifier.
     pub model: String,
+    /// Maximum tokens to generate in responses.
     pub max_tokens: Option<u32>,
+    /// Sampling temperature for response randomness.
     pub temperature: Option<f32>,
+    /// System prompt to guide model behavior.
     pub system: Option<String>,
+    /// Request timeout in seconds.
     pub timeout_seconds: Option<u64>,
-    client: Client,
+}
+
+/// Client for interacting with DeepSeek's API.
+///
+/// The client uses `Arc` internally for configuration, making cloning cheap.
+#[derive(Debug, Clone)]
+pub struct DeepSeek {
+    /// Shared configuration wrapped in Arc for cheap cloning.
+    pub config: Arc<DeepSeekConfig>,
+    /// HTTP client for making requests.
+    pub client: Client,
 }
 
 #[derive(Serialize)]
@@ -95,14 +115,37 @@ impl DeepSeek {
         if let Some(sec) = timeout_seconds {
             builder = builder.timeout(std::time::Duration::from_secs(sec));
         }
-        Self {
-            api_key: api_key.into(),
-            model: model.unwrap_or("deepseek-chat".to_string()),
+        Self::with_client(
+            builder.build().expect("Failed to build reqwest Client"),
+            api_key,
+            model,
             max_tokens,
             temperature,
-            system,
             timeout_seconds,
-            client: builder.build().expect("Failed to build reqwest Client"),
+            system,
+        )
+    }
+
+    /// Creates a new DeepSeek client with a custom HTTP client.
+    pub fn with_client(
+        client: Client,
+        api_key: impl Into<String>,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<String>,
+    ) -> Self {
+        Self {
+            config: Arc::new(DeepSeekConfig {
+                api_key: api_key.into(),
+                model: model.unwrap_or("deepseek-chat".to_string()),
+                max_tokens,
+                temperature,
+                system,
+                timeout_seconds,
+            }),
+            client,
         }
     }
 }
@@ -119,7 +162,7 @@ impl ChatProvider for DeepSeek {
     ///
     /// The provider's response text or an error
     async fn chat(&self, messages: &[ChatMessage]) -> Result<Box<dyn ChatResponse>, LLMError> {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing DeepSeek API key".to_string()));
         }
 
@@ -134,7 +177,7 @@ impl ChatProvider for DeepSeek {
             })
             .collect();
 
-        if let Some(system) = &self.system {
+        if let Some(system) = &self.config.system {
             deepseek_msgs.insert(
                 0,
                 DeepSeekChatMessage {
@@ -145,9 +188,9 @@ impl ChatProvider for DeepSeek {
         }
 
         let body = DeepSeekChatRequest {
-            model: &self.model,
+            model: &self.config.model,
             messages: deepseek_msgs,
-            temperature: self.temperature,
+            temperature: self.config.temperature,
             stream: false,
         };
 
@@ -160,10 +203,10 @@ impl ChatProvider for DeepSeek {
         let mut request = self
             .client
             .post("https://api.deepseek.com/v1/chat/completions")
-            .bearer_auth(&self.api_key)
+            .bearer_auth(&self.config.api_key)
             .json(&body);
 
-        if let Some(timeout) = self.timeout_seconds {
+        if let Some(timeout) = self.config.timeout_seconds {
             request = request.timeout(std::time::Duration::from_secs(timeout));
         }
 
@@ -230,14 +273,14 @@ impl ModelsProvider for DeepSeek {
         &self,
         _request: Option<&ModelListRequest>,
     ) -> Result<Box<dyn ModelListResponse>, LLMError> {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing DeepSeek API key".to_string()));
         }
 
         let resp = self
             .client
             .get("https://api.deepseek.com/v1/models")
-            .bearer_auth(&self.api_key)
+            .bearer_auth(&self.config.api_key)
             .send()
             .await?
             .error_for_status()?;

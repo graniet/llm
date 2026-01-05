@@ -104,7 +104,7 @@ struct MistralEmbeddingResponse {
 
 impl LLMProvider for Mistral {
     fn tools(&self) -> Option<&[Tool]> {
-        self.tools.as_deref()
+        self.config.tools.as_deref()
     }
 }
 
@@ -136,26 +136,26 @@ impl SpeechToTextProvider for Mistral {
 #[async_trait]
 impl EmbeddingProvider for Mistral {
     async fn embed(&self, input: Vec<String>) -> Result<Vec<Vec<f32>>, LLMError> {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Mistral API key".into()));
         }
 
         let body = MistralEmbeddingRequest {
-            model: self.model.clone(),
+            model: self.config.model.to_owned(),
             input,
-            encoding_format: self.embedding_encoding_format.clone(),
-            dimensions: self.embedding_dimensions,
+            encoding_format: self.config.embedding_encoding_format.as_deref().map(|s| s.to_owned()),
+            dimensions: self.config.embedding_dimensions,
         };
 
         let url = self
-            .base_url
+            .config.base_url
             .join("embeddings")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
         let resp = self
             .client
             .post(url)
-            .bearer_auth(&self.api_key)
+            .bearer_auth(&self.config.api_key)
             .json(&body)
             .send()
             .await?
@@ -173,14 +173,14 @@ impl ModelsProvider for Mistral {
         &self,
         _request: Option<&ModelListRequest>,
     ) -> Result<Box<dyn ModelListResponse>, LLMError> {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Mistral API key".to_string()));
         }
         let url = format!("{}models", MistralConfig::DEFAULT_BASE_URL);
         let resp = self
             .client
             .get(&url)
-            .bearer_auth(&self.api_key)
+            .bearer_auth(&self.config.api_key)
             .send()
             .await?
             .error_for_status()?;

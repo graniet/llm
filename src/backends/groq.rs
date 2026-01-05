@@ -93,7 +93,7 @@ impl Groq {
 
 impl LLMProvider for Groq {
     fn tools(&self) -> Option<&[Tool]> {
-        self.tools.as_deref()
+        self.config.tools.as_deref()
     }
 }
 
@@ -133,7 +133,7 @@ impl ModelsProvider for Groq {
         &self,
         _request: Option<&ModelListRequest>,
     ) -> Result<Box<dyn ModelListResponse>, LLMError> {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Groq API key".to_string()));
         }
 
@@ -142,7 +142,7 @@ impl ModelsProvider for Groq {
         let resp = self
             .client
             .get(&url)
-            .bearer_auth(&self.api_key)
+            .bearer_auth(&self.config.api_key)
             .send()
             .await?
             .error_for_status()?;
