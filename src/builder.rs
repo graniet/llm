@@ -201,6 +201,8 @@ pub struct LLMBuilder {
     resilient_max_delay_ms: Option<u64>,
     /// Resilience: jitter toggle
     resilient_jitter: Option<bool>,
+    /// Pre-configured HTTP client for connection pooling
+    client: Option<reqwest::Client>,
 }
 
 impl LLMBuilder {
@@ -479,6 +481,36 @@ impl LLMBuilder {
         self
     }
 
+    /// Sets a pre-configured HTTP client for connection pooling.
+    ///
+    /// This allows sharing a single `reqwest::Client` across multiple providers,
+    /// enabling connection pooling and reducing resource usage.
+    ///
+    /// # Arguments
+    ///
+    /// * `client` - A pre-configured `reqwest::Client` to use for HTTP requests
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use llm::builder::{LLMBuilder, LLMBackend};
+    /// use reqwest::Client;
+    /// use std::time::Duration;
+    ///
+    /// let shared_client = Client::builder()
+    ///     .timeout(Duration::from_secs(60))
+    ///     .build()
+    ///     .unwrap();
+    ///
+    /// let builder = LLMBuilder::new()
+    ///     .backend(LLMBackend::OpenAI)
+    ///     .client(shared_client);
+    /// ```
+    pub fn client(mut self, client: reqwest::Client) -> Self {
+        self.client = Some(client);
+        self
+    }
+
     #[deprecated(note = "Renamed to `xai_search_mode`.")]
     pub fn search_mode(self, mode: impl Into<String>) -> Self {
         self.xai_search_mode(mode)
@@ -661,32 +693,63 @@ impl LLMBuilder {
                     let key = self.api_key.ok_or_else(|| {
                         LLMError::InvalidRequest("No API key provided for OpenAI".to_string())
                     })?;
-                    Box::new(crate::backends::openai::OpenAI::new(
-                        key,
-                        self.base_url,
-                        self.model,
-                        self.max_tokens,
-                        self.temperature,
-                        self.timeout_seconds,
-                        self.system,
-                        self.top_p,
-                        self.top_k,
-                        self.embedding_encoding_format,
-                        self.embedding_dimensions,
-                        tools,
-                        tool_choice,
-                        self.normalize_response,
-                        self.reasoning_effort,
-                        self.json_schema,
-                        self.voice,
-                        self.extra_body,
-                        self.openai_enable_web_search,
-                        self.openai_web_search_context_size,
-                        self.openai_web_search_user_location_type,
-                        self.openai_web_search_user_location_approximate_country,
-                        self.openai_web_search_user_location_approximate_city,
-                        self.openai_web_search_user_location_approximate_region,
-                    )?)
+                    let openai = if let Some(client) = self.client.clone() {
+                        crate::backends::openai::OpenAI::with_client(
+                            client,
+                            key,
+                            self.base_url.clone(),
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            self.embedding_encoding_format.clone(),
+                            self.embedding_dimensions,
+                            tools.clone(),
+                            tool_choice.clone(),
+                            self.normalize_response,
+                            self.reasoning_effort.clone(),
+                            self.json_schema.clone(),
+                            self.voice.clone(),
+                            self.extra_body.clone(),
+                            self.openai_enable_web_search,
+                            self.openai_web_search_context_size.clone(),
+                            self.openai_web_search_user_location_type.clone(),
+                            self.openai_web_search_user_location_approximate_country.clone(),
+                            self.openai_web_search_user_location_approximate_city.clone(),
+                            self.openai_web_search_user_location_approximate_region.clone(),
+                        )?
+                    } else {
+                        crate::backends::openai::OpenAI::new(
+                            key,
+                            self.base_url.clone(),
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            self.embedding_encoding_format.clone(),
+                            self.embedding_dimensions,
+                            tools.clone(),
+                            tool_choice.clone(),
+                            self.normalize_response,
+                            self.reasoning_effort.clone(),
+                            self.json_schema.clone(),
+                            self.voice.clone(),
+                            self.extra_body.clone(),
+                            self.openai_enable_web_search,
+                            self.openai_web_search_context_size.clone(),
+                            self.openai_web_search_user_location_type.clone(),
+                            self.openai_web_search_user_location_approximate_country.clone(),
+                            self.openai_web_search_user_location_approximate_city.clone(),
+                            self.openai_web_search_user_location_approximate_region.clone(),
+                        )?
+                    };
+                    Box::new(openai)
                 }
             }
             LLMBackend::ElevenLabs => {
@@ -696,16 +759,28 @@ impl LLMBuilder {
                 ));
                 #[cfg(feature = "elevenlabs")]
                 {
-                    let api_key = self.api_key.ok_or_else(|| {
+                    let api_key = self.api_key.clone().ok_or_else(|| {
                         LLMError::InvalidRequest("No API key provided for ElevenLabs".to_string())
                     })?;
-                    let elevenlabs = crate::backends::elevenlabs::ElevenLabs::new(
-                        api_key,
-                        self.model.unwrap_or("eleven_multilingual_v2".to_string()),
-                        "https://api.elevenlabs.io/v1".to_string(),
-                        self.timeout_seconds,
-                        self.voice,
-                    );
+                    let model = self.model.clone().unwrap_or("eleven_multilingual_v2".to_string());
+                    let elevenlabs = if let Some(client) = self.client.clone() {
+                        crate::backends::elevenlabs::ElevenLabs::with_client(
+                            client,
+                            api_key,
+                            model,
+                            "https://api.elevenlabs.io/v1".to_string(),
+                            self.timeout_seconds,
+                            self.voice.clone(),
+                        )
+                    } else {
+                        crate::backends::elevenlabs::ElevenLabs::new(
+                            api_key,
+                            model,
+                            "https://api.elevenlabs.io/v1".to_string(),
+                            self.timeout_seconds,
+                            self.voice.clone(),
+                        )
+                    };
                     Box::new(elevenlabs)
                 }
             }
@@ -719,20 +794,38 @@ impl LLMBuilder {
                     let api_key = self.api_key.ok_or_else(|| {
                         LLMError::InvalidRequest("No API key provided for Anthropic".to_string())
                     })?;
-                    let anthro = crate::backends::anthropic::Anthropic::new(
-                        api_key,
-                        self.model,
-                        self.max_tokens,
-                        self.temperature,
-                        self.timeout_seconds,
-                        self.system,
-                        self.top_p,
-                        self.top_k,
-                        tools,
-                        self.tool_choice,
-                        self.reasoning,
-                        self.reasoning_budget_tokens,
-                    );
+                    let anthro = if let Some(client) = self.client.clone() {
+                        crate::backends::anthropic::Anthropic::with_client(
+                            client,
+                            api_key,
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            tools.clone(),
+                            self.tool_choice.clone(),
+                            self.reasoning,
+                            self.reasoning_budget_tokens,
+                        )
+                    } else {
+                        crate::backends::anthropic::Anthropic::new(
+                            api_key,
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            tools.clone(),
+                            self.tool_choice.clone(),
+                            self.reasoning,
+                            self.reasoning_budget_tokens,
+                        )
+                    };
                     Box::new(anthro)
                 }
             }
@@ -745,20 +838,38 @@ impl LLMBuilder {
                 {
                     let url = self
                         .base_url
+                        .clone()
                         .unwrap_or("http://localhost:11434".to_string());
-                    let ollama = crate::backends::ollama::Ollama::new(
-                        url,
-                        self.api_key,
-                        self.model,
-                        self.max_tokens,
-                        self.temperature,
-                        self.timeout_seconds,
-                        self.system,
-                        self.top_p,
-                        self.top_k,
-                        self.json_schema,
-                        tools,
-                    );
+                    let ollama = if let Some(client) = self.client.clone() {
+                        crate::backends::ollama::Ollama::with_client(
+                            client,
+                            url,
+                            self.api_key.clone(),
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            self.json_schema.clone(),
+                            tools.clone(),
+                        )
+                    } else {
+                        crate::backends::ollama::Ollama::new(
+                            url,
+                            self.api_key.clone(),
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            self.json_schema.clone(),
+                            tools.clone(),
+                        )
+                    };
                     Box::new(ollama)
                 }
             }
@@ -770,17 +881,29 @@ impl LLMBuilder {
 
                 #[cfg(feature = "deepseek")]
                 {
-                    let api_key = self.api_key.ok_or_else(|| {
+                    let api_key = self.api_key.clone().ok_or_else(|| {
                         LLMError::InvalidRequest("No API key provided for DeepSeek".to_string())
                     })?;
-                    let deepseek = crate::backends::deepseek::DeepSeek::new(
-                        api_key,
-                        self.model,
-                        self.max_tokens,
-                        self.temperature,
-                        self.timeout_seconds,
-                        self.system,
-                    );
+                    let deepseek = if let Some(client) = self.client.clone() {
+                        crate::backends::deepseek::DeepSeek::with_client(
+                            client,
+                            api_key,
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                        )
+                    } else {
+                        crate::backends::deepseek::DeepSeek::new(
+                            api_key,
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                        )
+                    };
                     Box::new(deepseek)
                 }
             }
@@ -792,29 +915,52 @@ impl LLMBuilder {
 
                 #[cfg(feature = "xai")]
                 {
-                    let api_key = self.api_key.ok_or_else(|| {
+                    let api_key = self.api_key.clone().ok_or_else(|| {
                         LLMError::InvalidRequest("No API key provided for XAI".to_string())
                     })?;
 
-                    let xai = crate::backends::xai::XAI::new(
-                        api_key,
-                        self.model,
-                        self.max_tokens,
-                        self.temperature,
-                        self.timeout_seconds,
-                        self.system,
-                        self.top_p,
-                        self.top_k,
-                        self.embedding_encoding_format,
-                        self.embedding_dimensions,
-                        self.json_schema,
-                        self.xai_search_mode,
-                        self.xai_search_source_type,
-                        self.xai_search_excluded_websites,
-                        self.xai_search_max_results,
-                        self.xai_search_from_date,
-                        self.xai_search_to_date,
-                    );
+                    let xai = if let Some(client) = self.client.clone() {
+                        crate::backends::xai::XAI::with_client(
+                            client,
+                            api_key,
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            self.embedding_encoding_format.clone(),
+                            self.embedding_dimensions,
+                            self.json_schema.clone(),
+                            self.xai_search_mode.clone(),
+                            self.xai_search_source_type.clone(),
+                            self.xai_search_excluded_websites.clone(),
+                            self.xai_search_max_results,
+                            self.xai_search_from_date.clone(),
+                            self.xai_search_to_date.clone(),
+                        )
+                    } else {
+                        crate::backends::xai::XAI::new(
+                            api_key,
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            self.embedding_encoding_format.clone(),
+                            self.embedding_dimensions,
+                            self.json_schema.clone(),
+                            self.xai_search_mode.clone(),
+                            self.xai_search_source_type.clone(),
+                            self.xai_search_excluded_websites.clone(),
+                            self.xai_search_max_results,
+                            self.xai_search_from_date.clone(),
+                            self.xai_search_to_date.clone(),
+                        )
+                    };
                     Box::new(xai)
                 }
             }
@@ -826,15 +972,28 @@ impl LLMBuilder {
 
                 #[cfg(feature = "phind")]
                 {
-                    let phind = crate::backends::phind::Phind::new(
-                        self.model,
-                        self.max_tokens,
-                        self.temperature,
-                        self.timeout_seconds,
-                        self.system,
-                        self.top_p,
-                        self.top_k,
-                    );
+                    let phind = if let Some(client) = self.client.clone() {
+                        crate::backends::phind::Phind::with_client(
+                            client,
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                        )
+                    } else {
+                        crate::backends::phind::Phind::new(
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                        )
+                    };
                     Box::new(phind)
                 }
             }
@@ -846,22 +1005,38 @@ impl LLMBuilder {
 
                 #[cfg(feature = "google")]
                 {
-                    let api_key = self.api_key.ok_or_else(|| {
+                    let api_key = self.api_key.clone().ok_or_else(|| {
                         LLMError::InvalidRequest("No API key provided for Google".to_string())
                     })?;
 
-                    let google = crate::backends::google::Google::new(
-                        api_key,
-                        self.model,
-                        self.max_tokens,
-                        self.temperature,
-                        self.timeout_seconds,
-                        self.system,
-                        self.top_p,
-                        self.top_k,
-                        self.json_schema,
-                        tools,
-                    );
+                    let google = if let Some(client) = self.client.clone() {
+                        crate::backends::google::Google::with_client(
+                            client,
+                            api_key,
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            self.json_schema.clone(),
+                            tools.clone(),
+                        )
+                    } else {
+                        crate::backends::google::Google::new(
+                            api_key,
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            self.json_schema.clone(),
+                            tools.clone(),
+                        )
+                    };
                     Box::new(google)
                 }
             }
@@ -873,30 +1048,54 @@ impl LLMBuilder {
 
                 #[cfg(feature = "groq")]
                 {
-                    let api_key = self.api_key.ok_or_else(|| {
+                    let api_key = self.api_key.clone().ok_or_else(|| {
                         LLMError::InvalidRequest("No API key provided for Groq".to_string())
                     })?;
 
-                    let groq = crate::backends::groq::Groq::with_config(
-                        api_key,
-                        self.base_url,
-                        self.model,
-                        self.max_tokens,
-                        self.temperature,
-                        self.timeout_seconds,
-                        self.system,
-                        self.top_p,
-                        self.top_k,
-                        self.tools,
-                        self.tool_choice,
-                        self.extra_body,
-                        None, // embedding_encoding_format
-                        None, // embedding_dimensions
-                        None, // reasoning_effort
-                        self.json_schema,
-                        self.enable_parallel_tool_use,
-                        self.normalize_response,
-                    );
+                    let groq = if let Some(client) = self.client.clone() {
+                        crate::backends::groq::Groq::with_config_and_client(
+                            client,
+                            api_key,
+                            self.base_url.clone(),
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            self.tools.clone(),
+                            self.tool_choice.clone(),
+                            self.extra_body.clone(),
+                            None,
+                            None,
+                            None,
+                            self.json_schema.clone(),
+                            self.enable_parallel_tool_use,
+                            self.normalize_response,
+                        )
+                    } else {
+                        crate::backends::groq::Groq::with_config(
+                            api_key,
+                            self.base_url.clone(),
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            self.tools.clone(),
+                            self.tool_choice.clone(),
+                            self.extra_body.clone(),
+                            None,
+                            None,
+                            None,
+                            self.json_schema.clone(),
+                            self.enable_parallel_tool_use,
+                            self.normalize_response,
+                        )
+                    };
                     Box::new(groq)
                 }
             }
@@ -908,30 +1107,54 @@ impl LLMBuilder {
 
                 #[cfg(feature = "openrouter")]
                 {
-                    let api_key = self.api_key.ok_or_else(|| {
+                    let api_key = self.api_key.clone().ok_or_else(|| {
                         LLMError::InvalidRequest("No API key provided for OpenRouter".to_string())
                     })?;
 
-                    let openrouter = crate::backends::openrouter::OpenRouter::with_config(
-                        api_key,
-                        self.base_url,
-                        self.model,
-                        self.max_tokens,
-                        self.temperature,
-                        self.timeout_seconds,
-                        self.system,
-                        self.top_p,
-                        self.top_k,
-                        self.tools,
-                        self.tool_choice,
-                        self.extra_body,
-                        None, // embedding_encoding_format
-                        None, // embedding_dimensions
-                        None, // reasoning_effort
-                        self.json_schema,
-                        self.enable_parallel_tool_use,
-                        self.normalize_response,
-                    );
+                    let openrouter = if let Some(client) = self.client.clone() {
+                        crate::backends::openrouter::OpenRouter::with_config_and_client(
+                            client,
+                            api_key,
+                            self.base_url.clone(),
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            self.tools.clone(),
+                            self.tool_choice.clone(),
+                            self.extra_body.clone(),
+                            None,
+                            None,
+                            None,
+                            self.json_schema.clone(),
+                            self.enable_parallel_tool_use,
+                            self.normalize_response,
+                        )
+                    } else {
+                        crate::backends::openrouter::OpenRouter::with_config(
+                            api_key,
+                            self.base_url.clone(),
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            self.tools.clone(),
+                            self.tool_choice.clone(),
+                            self.extra_body.clone(),
+                            None,
+                            None,
+                            None,
+                            self.json_schema.clone(),
+                            self.enable_parallel_tool_use,
+                            self.normalize_response,
+                        )
+                    };
                     Box::new(openrouter)
                 }
             }
@@ -943,30 +1166,53 @@ impl LLMBuilder {
 
                 #[cfg(feature = "cohere")]
                 {
-                    let api_key = self.api_key.ok_or_else(|| {
+                    let api_key = self.api_key.clone().ok_or_else(|| {
                         LLMError::InvalidRequest("No API key provided for Cohere".to_string())
                     })?;
-                    let cohere = crate::backends::cohere::Cohere::new(
-                        api_key,
-                        self.base_url,
-                        self.model,
-                        self.max_tokens,
-                        self.temperature,
-                        self.timeout_seconds,
-                        self.system,
-                        self.top_p,
-                        self.top_k,
-                        tools,
-                        self.tool_choice,
-                        self.reasoning_effort,
-                        self.json_schema,
-                        None,
-                        self.extra_body,
-                        self.enable_parallel_tool_use,
-                        self.normalize_response,
-                        self.embedding_encoding_format,
-                        self.embedding_dimensions,
-                    );
+                    let cohere = if let Some(client) = self.client.clone() {
+                        crate::backends::cohere::Cohere::with_config_and_client(
+                            client,
+                            api_key,
+                            self.base_url.clone(),
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            tools.clone(),
+                            self.tool_choice.clone(),
+                            self.extra_body.clone(),
+                            self.embedding_encoding_format.clone(),
+                            self.embedding_dimensions,
+                            self.reasoning_effort.clone(),
+                            self.json_schema.clone(),
+                            self.enable_parallel_tool_use,
+                            self.normalize_response,
+                        )
+                    } else {
+                        crate::backends::cohere::Cohere::with_config(
+                            api_key,
+                            self.base_url.clone(),
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            tools.clone(),
+                            self.tool_choice.clone(),
+                            self.extra_body.clone(),
+                            self.embedding_encoding_format.clone(),
+                            self.embedding_dimensions,
+                            self.reasoning_effort.clone(),
+                            self.json_schema.clone(),
+                            self.enable_parallel_tool_use,
+                            self.normalize_response,
+                        )
+                    };
                     Box::new(cohere)
                 }
             }
@@ -978,32 +1224,56 @@ impl LLMBuilder {
 
                 #[cfg(feature = "huggingface")]
                 {
-                    let api_key = self.api_key.ok_or_else(|| {
+                    let api_key = self.api_key.clone().ok_or_else(|| {
                         LLMError::InvalidRequest(
                             "No API key provided for HuggingFace Inference Providers".to_string(),
                         )
                     })?;
 
-                    let llm = crate::backends::huggingface::HuggingFace::with_config(
-                        api_key,
-                        self.base_url,
-                        self.model,
-                        self.max_tokens,
-                        self.temperature,
-                        self.timeout_seconds,
-                        self.system,
-                        self.top_p,
-                        self.top_k,
-                        self.tools,
-                        self.tool_choice,
-                        self.extra_body,
-                        None, // embedding_encoding_format
-                        None, // embedding_dimensions
-                        None, // reasoning_effort
-                        self.json_schema,
-                        self.enable_parallel_tool_use,
-                        self.normalize_response,
-                    );
+                    let llm = if let Some(client) = self.client.clone() {
+                        crate::backends::huggingface::HuggingFace::with_config_and_client(
+                            client,
+                            api_key,
+                            self.base_url.clone(),
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            self.tools.clone(),
+                            self.tool_choice.clone(),
+                            self.extra_body.clone(),
+                            None,
+                            None,
+                            None,
+                            self.json_schema.clone(),
+                            self.enable_parallel_tool_use,
+                            self.normalize_response,
+                        )
+                    } else {
+                        crate::backends::huggingface::HuggingFace::with_config(
+                            api_key,
+                            self.base_url.clone(),
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            self.tools.clone(),
+                            self.tool_choice.clone(),
+                            self.extra_body.clone(),
+                            None,
+                            None,
+                            None,
+                            self.json_schema.clone(),
+                            self.enable_parallel_tool_use,
+                            self.normalize_response,
+                        )
+                    };
                     Box::new(llm)
                 }
             }
@@ -1014,29 +1284,53 @@ impl LLMBuilder {
                 ));
                 #[cfg(feature = "mistral")]
                 {
-                    let api_key = self.api_key.ok_or_else(|| {
+                    let api_key = self.api_key.clone().ok_or_else(|| {
                         LLMError::InvalidRequest("No API key provided for Mistral".to_string())
                     })?;
-                    let mistral = crate::backends::mistral::Mistral::with_config(
-                        api_key,
-                        self.base_url,
-                        self.model,
-                        self.max_tokens,
-                        self.temperature,
-                        self.timeout_seconds,
-                        self.system,
-                        self.top_p,
-                        self.top_k,
-                        tools,
-                        tool_choice,
-                        self.extra_body,
-                        self.embedding_encoding_format,
-                        self.embedding_dimensions,
-                        self.reasoning_effort,
-                        self.json_schema,
-                        self.enable_parallel_tool_use,
-                        self.normalize_response,
-                    );
+                    let mistral = if let Some(client) = self.client.clone() {
+                        crate::backends::mistral::Mistral::with_config_and_client(
+                            client,
+                            api_key,
+                            self.base_url.clone(),
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            tools.clone(),
+                            tool_choice.clone(),
+                            self.extra_body.clone(),
+                            self.embedding_encoding_format.clone(),
+                            self.embedding_dimensions,
+                            self.reasoning_effort.clone(),
+                            self.json_schema.clone(),
+                            self.enable_parallel_tool_use,
+                            self.normalize_response,
+                        )
+                    } else {
+                        crate::backends::mistral::Mistral::with_config(
+                            api_key,
+                            self.base_url.clone(),
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            tools.clone(),
+                            tool_choice.clone(),
+                            self.extra_body.clone(),
+                            self.embedding_encoding_format.clone(),
+                            self.embedding_dimensions,
+                            self.reasoning_effort.clone(),
+                            self.json_schema.clone(),
+                            self.enable_parallel_tool_use,
+                            self.normalize_response,
+                        )
+                    };
                     Box::new(mistral)
                 }
             }
@@ -1047,41 +1341,65 @@ impl LLMBuilder {
                 ));
                 #[cfg(feature = "azure_openai")]
                 {
-                    let endpoint = self.base_url.ok_or_else(|| {
+                    let endpoint = self.base_url.clone().ok_or_else(|| {
                         LLMError::InvalidRequest("No API endpoint provided for Azure OpenAI".into())
                     })?;
-                    let key = self.api_key.ok_or_else(|| {
+                    let key = self.api_key.clone().ok_or_else(|| {
                         LLMError::InvalidRequest("No API key provided for Azure OpenAI".to_string())
                     })?;
-                    let api_version = self.api_version.ok_or_else(|| {
+                    let api_version = self.api_version.clone().ok_or_else(|| {
                         LLMError::InvalidRequest(
                             "No API version provided for Azure OpenAI".to_string(),
                         )
                     })?;
-                    let deployment = self.deployment_id.ok_or_else(|| {
+                    let deployment = self.deployment_id.clone().ok_or_else(|| {
                         LLMError::InvalidRequest(
                             "No deployment ID provided for Azure OpenAI".into(),
                         )
                     })?;
-                    Box::new(crate::backends::azure_openai::AzureOpenAI::new(
-                        key,
-                        api_version,
-                        deployment,
-                        endpoint,
-                        self.model,
-                        self.max_tokens,
-                        self.temperature,
-                        self.timeout_seconds,
-                        self.system,
-                        self.top_p,
-                        self.top_k,
-                        self.embedding_encoding_format,
-                        self.embedding_dimensions,
-                        tools,
-                        tool_choice,
-                        self.reasoning_effort,
-                        self.json_schema,
-                    ))
+                    let azure = if let Some(client) = self.client.clone() {
+                        crate::backends::azure_openai::AzureOpenAI::with_client(
+                            client,
+                            key,
+                            api_version,
+                            deployment,
+                            endpoint,
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            self.embedding_encoding_format.clone(),
+                            self.embedding_dimensions,
+                            tools.clone(),
+                            tool_choice.clone(),
+                            self.reasoning_effort.clone(),
+                            self.json_schema.clone(),
+                        )
+                    } else {
+                        crate::backends::azure_openai::AzureOpenAI::new(
+                            key,
+                            api_version,
+                            deployment,
+                            endpoint,
+                            self.model.clone(),
+                            self.max_tokens,
+                            self.temperature,
+                            self.timeout_seconds,
+                            self.system.clone(),
+                            self.top_p,
+                            self.top_k,
+                            self.embedding_encoding_format.clone(),
+                            self.embedding_dimensions,
+                            tools.clone(),
+                            tool_choice.clone(),
+                            self.reasoning_effort.clone(),
+                            self.json_schema.clone(),
+                        )
+                    };
+                    Box::new(azure)
                 }
             }
             LLMBackend::AwsBedrock => {
@@ -1304,5 +1622,38 @@ impl FunctionBuilder {
                 parameters: parameters_value,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_builder_client_method() {
+        let shared_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .expect("Failed to build client");
+
+        let builder = LLMBuilder::new()
+            .backend(LLMBackend::OpenAI)
+            .client(shared_client)
+            .api_key("test-key")
+            .model("gpt-4");
+
+        // Verify the client was set
+        assert!(builder.client.is_some());
+    }
+
+    #[test]
+    fn test_builder_without_client() {
+        let builder = LLMBuilder::new()
+            .backend(LLMBackend::OpenAI)
+            .api_key("test-key")
+            .model("gpt-4");
+
+        // Verify no client was set (will create default)
+        assert!(builder.client.is_none());
     }
 }

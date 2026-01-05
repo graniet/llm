@@ -17,6 +17,7 @@ use crate::{
 use async_trait::async_trait;
 
 /// OpenRouter configuration for the generic provider
+#[derive(Clone)]
 pub struct OpenRouterConfig;
 
 impl OpenAIProviderConfig for OpenRouterConfig {
@@ -73,6 +74,53 @@ impl OpenRouter {
             normalize_response,
             None, // embedding_encoding_format - not supported by OpenRouter
             None, // embedding_dimensions - not supported by OpenRouter
+        )
+    }
+
+    /// Creates a new OpenRouter client with a pre-configured HTTP client.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_config_and_client(
+        client: reqwest::Client,
+        api_key: impl Into<String>,
+        base_url: Option<String>,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<String>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+        tools: Option<Vec<Tool>>,
+        tool_choice: Option<ToolChoice>,
+        extra_body: Option<serde_json::Value>,
+        _embedding_encoding_format: Option<String>,
+        _embedding_dimensions: Option<u32>,
+        reasoning_effort: Option<String>,
+        json_schema: Option<StructuredOutputFormat>,
+        parallel_tool_calls: Option<bool>,
+        normalize_response: Option<bool>,
+    ) -> Self {
+        OpenAICompatibleProvider::<OpenRouterConfig>::with_client(
+            client,
+            api_key,
+            base_url,
+            model,
+            max_tokens,
+            temperature,
+            timeout_seconds,
+            system,
+            top_p,
+            top_k,
+            tools,
+            tool_choice,
+            reasoning_effort,
+            json_schema,
+            None,
+            extra_body,
+            parallel_tool_calls,
+            normalize_response,
+            None,
+            None,
         )
     }
 }

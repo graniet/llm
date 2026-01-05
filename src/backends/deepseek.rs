@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ToolCall;
 
+#[derive(Clone)]
 pub struct DeepSeek {
     pub api_key: String,
     pub model: String,
@@ -103,6 +104,30 @@ impl DeepSeek {
             system,
             timeout_seconds,
             client: builder.build().expect("Failed to build reqwest Client"),
+        }
+    }
+
+    /// Creates a new DeepSeek client with a pre-configured HTTP client.
+    ///
+    /// This allows sharing a single `reqwest::Client` across multiple providers,
+    /// enabling connection pooling and reducing resource usage.
+    pub fn with_client(
+        client: Client,
+        api_key: impl Into<String>,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<String>,
+    ) -> Self {
+        Self {
+            api_key: api_key.into(),
+            model: model.unwrap_or("deepseek-chat".to_string()),
+            max_tokens,
+            temperature,
+            system,
+            timeout_seconds,
+            client,
         }
     }
 }

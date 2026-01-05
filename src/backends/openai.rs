@@ -23,10 +23,12 @@ use crate::{
 };
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// OpenAI configuration for the generic provider
+#[derive(Clone)]
 struct OpenAIConfig;
 
 impl OpenAIProviderConfig for OpenAIConfig {
@@ -42,6 +44,7 @@ impl OpenAIProviderConfig for OpenAIConfig {
 // NOTE: OpenAI cannot directly use the OpenAICompatibleProvider type alias, as it needs specific fields
 
 /// Client for OpenAI API
+#[derive(Clone)]
 pub struct OpenAI {
     // Delegate to the generic provider for common functionality
     provider: OpenAICompatibleProvider<OpenAIConfig>,
@@ -223,6 +226,74 @@ impl OpenAI {
         }
         Ok(OpenAI {
             provider: <OpenAICompatibleProvider<OpenAIConfig>>::new(
+                api_key_str,
+                base_url,
+                model,
+                max_tokens,
+                temperature,
+                timeout_seconds,
+                system,
+                top_p,
+                top_k,
+                tools,
+                tool_choice,
+                reasoning_effort,
+                json_schema,
+                voice,
+                extra_body,
+                None, // parallel_tool_calls
+                normalize_response,
+                embedding_encoding_format,
+                embedding_dimensions,
+            ),
+            enable_web_search: enable_web_search.unwrap_or(false),
+            web_search_context_size,
+            web_search_user_location_type,
+            web_search_user_location_approximate_country,
+            web_search_user_location_approximate_city,
+            web_search_user_location_approximate_region,
+        })
+    }
+
+    /// Creates a new OpenAI client with a pre-configured HTTP client.
+    ///
+    /// This allows sharing a single `reqwest::Client` across multiple providers,
+    /// enabling connection pooling and reducing resource usage.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_client(
+        client: Client,
+        api_key: impl Into<String>,
+        base_url: Option<String>,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<String>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+        embedding_encoding_format: Option<String>,
+        embedding_dimensions: Option<u32>,
+        tools: Option<Vec<Tool>>,
+        tool_choice: Option<ToolChoice>,
+        normalize_response: Option<bool>,
+        reasoning_effort: Option<String>,
+        json_schema: Option<StructuredOutputFormat>,
+        voice: Option<String>,
+        extra_body: Option<serde_json::Value>,
+        enable_web_search: Option<bool>,
+        web_search_context_size: Option<String>,
+        web_search_user_location_type: Option<String>,
+        web_search_user_location_approximate_country: Option<String>,
+        web_search_user_location_approximate_city: Option<String>,
+        web_search_user_location_approximate_region: Option<String>,
+    ) -> Result<Self, LLMError> {
+        let api_key_str = api_key.into();
+        if api_key_str.is_empty() {
+            return Err(LLMError::AuthError("Missing OpenAI API key".to_string()));
+        }
+        Ok(OpenAI {
+            provider: <OpenAICompatibleProvider<OpenAIConfig>>::with_client(
+                client,
                 api_key_str,
                 base_url,
                 model,

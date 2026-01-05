@@ -29,7 +29,7 @@ use serde_json::Value;
 /// Client for interacting with Anthropic's API.
 ///
 /// Provides methods for chat and completion requests using Anthropic's models.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Anthropic {
     pub api_key: String,
     pub model: String,
@@ -504,6 +504,43 @@ impl Anthropic {
             reasoning: reasoning.unwrap_or(false),
             thinking_budget_tokens,
             client: builder.build().expect("Failed to build reqwest Client"),
+        }
+    }
+
+    /// Creates a new Anthropic client with a pre-configured HTTP client.
+    ///
+    /// This allows sharing a single `reqwest::Client` across multiple providers,
+    /// enabling connection pooling and reducing resource usage.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_client(
+        client: Client,
+        api_key: impl Into<String>,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<String>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+        tools: Option<Vec<Tool>>,
+        tool_choice: Option<ToolChoice>,
+        reasoning: Option<bool>,
+        thinking_budget_tokens: Option<u32>,
+    ) -> Self {
+        Self {
+            api_key: api_key.into(),
+            model: model.unwrap_or_else(|| "claude-3-sonnet-20240229".to_string()),
+            max_tokens: max_tokens.unwrap_or(300),
+            temperature: temperature.unwrap_or(0.7),
+            system: system.unwrap_or_else(|| "You are a helpful assistant.".to_string()),
+            timeout_seconds: timeout_seconds.unwrap_or(30),
+            top_p,
+            top_k,
+            tools,
+            tool_choice,
+            reasoning: reasoning.unwrap_or(false),
+            thinking_budget_tokens,
+            client,
         }
     }
 }
@@ -1390,5 +1427,82 @@ data: {"type": "ping"}
         let mut tool_states = HashMap::new();
         let result = parse_anthropic_sse_chunk_with_tools(chunk, &mut tool_states).unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_anthropic_clone() {
+        let anthropic = Anthropic::new(
+            "test-api-key",
+            Some("claude-3-sonnet".to_string()),
+            Some(1000),
+            Some(0.7),
+            Some(30),
+            Some("You are helpful.".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        // Clone the provider
+        let cloned = anthropic.clone();
+
+        // Verify both have the same configuration
+        assert_eq!(anthropic.api_key, cloned.api_key);
+        assert_eq!(anthropic.model, cloned.model);
+        assert_eq!(anthropic.max_tokens, cloned.max_tokens);
+        assert_eq!(anthropic.temperature, cloned.temperature);
+        assert_eq!(anthropic.system, cloned.system);
+    }
+
+    #[test]
+    fn test_anthropic_with_client() {
+        let shared_client = Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .expect("Failed to build client");
+
+        let anthropic = Anthropic::with_client(
+            shared_client.clone(),
+            "test-api-key",
+            Some("claude-3-sonnet".to_string()),
+            Some(1000),
+            Some(0.7),
+            Some(30),
+            Some("You are helpful.".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        // Verify configuration
+        assert_eq!(anthropic.api_key, "test-api-key");
+        assert_eq!(anthropic.model, "claude-3-sonnet");
+        assert_eq!(anthropic.max_tokens, 1000);
+
+        // Create another provider with the same client
+        let anthropic2 = Anthropic::with_client(
+            shared_client,
+            "test-api-key-2",
+            Some("claude-3-haiku".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(anthropic2.api_key, "test-api-key-2");
+        assert_eq!(anthropic2.model, "claude-3-haiku");
     }
 }

@@ -16,6 +16,7 @@ use std::time::Duration;
 ///
 /// This struct provides functionality for speech-to-text transcription using the ElevenLabs API.
 /// It implements various LLM provider traits but only supports speech-to-text functionality.
+#[derive(Clone)]
 pub struct ElevenLabs {
     /// API key for ElevenLabs authentication
     api_key: String,
@@ -92,12 +93,38 @@ impl ElevenLabs {
         timeout_seconds: Option<u64>,
         voice: Option<String>,
     ) -> Self {
+        let mut builder = Client::builder();
+        if let Some(sec) = timeout_seconds {
+            builder = builder.timeout(Duration::from_secs(sec));
+        }
         Self {
             api_key,
             model_id,
             base_url,
             timeout_seconds,
-            client: Client::new(),
+            client: builder.build().expect("Failed to build reqwest Client"),
+            voice,
+        }
+    }
+
+    /// Creates a new ElevenLabs client with a pre-configured HTTP client.
+    ///
+    /// This allows sharing a single `reqwest::Client` across multiple providers,
+    /// enabling connection pooling and reducing resource usage.
+    pub fn with_client(
+        client: Client,
+        api_key: String,
+        model_id: String,
+        base_url: String,
+        timeout_seconds: Option<u64>,
+        voice: Option<String>,
+    ) -> Self {
+        Self {
+            api_key,
+            model_id,
+            base_url,
+            timeout_seconds,
+            client,
             voice,
         }
     }
