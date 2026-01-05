@@ -391,6 +391,54 @@ impl Ollama {
         }
     }
 
+    pub fn base_url(&self) -> &str {
+        &self.config.base_url
+    }
+
+    pub fn api_key(&self) -> Option<&str> {
+        self.config.api_key.as_deref()
+    }
+
+    pub fn model(&self) -> &str {
+        &self.config.model
+    }
+
+    pub fn max_tokens(&self) -> Option<u32> {
+        self.config.max_tokens
+    }
+
+    pub fn temperature(&self) -> Option<f32> {
+        self.config.temperature
+    }
+
+    pub fn timeout_seconds(&self) -> Option<u64> {
+        self.config.timeout_seconds
+    }
+
+    pub fn system(&self) -> Option<&str> {
+        self.config.system.as_deref()
+    }
+
+    pub fn top_p(&self) -> Option<f32> {
+        self.config.top_p
+    }
+
+    pub fn top_k(&self) -> Option<u32> {
+        self.config.top_k
+    }
+
+    pub fn json_schema(&self) -> Option<&StructuredOutputFormat> {
+        self.config.json_schema.as_ref()
+    }
+
+    pub fn tools(&self) -> Option<&[Tool]> {
+        self.config.tools.as_deref()
+    }
+
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+
     fn make_chat_request<'a>(
         &'a self,
         messages: &'a [ChatMessage],

@@ -616,6 +616,57 @@ impl Anthropic {
         }
     }
 
+    pub fn api_key(&self) -> &str {
+        &self.config.api_key
+    }
+
+    pub fn model(&self) -> &str {
+        &self.config.model
+    }
+
+    pub fn max_tokens(&self) -> u32 {
+        self.config.max_tokens
+    }
+
+    pub fn temperature(&self) -> f32 {
+        self.config.temperature
+    }
+
+    pub fn timeout_seconds(&self) -> u64 {
+        self.config.timeout_seconds
+    }
+
+    pub fn system(&self) -> &str {
+        &self.config.system
+    }
+
+    pub fn top_p(&self) -> Option<f32> {
+        self.config.top_p
+    }
+
+    pub fn top_k(&self) -> Option<u32> {
+        self.config.top_k
+    }
+
+    pub fn tools(&self) -> Option<&[Tool]> {
+        self.config.tools.as_deref()
+    }
+
+    pub fn tool_choice(&self) -> Option<&ToolChoice> {
+        self.config.tool_choice.as_ref()
+    }
+
+    pub fn reasoning(&self) -> bool {
+        self.config.reasoning
+    }
+
+    pub fn thinking_budget_tokens(&self) -> Option<u32> {
+        self.config.thinking_budget_tokens
+    }
+
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
 }
 
 #[async_trait]
@@ -640,8 +691,11 @@ impl ChatProvider for Anthropic {
         }
 
         let anthropic_messages = Self::convert_messages_to_anthropic(messages);
-        let (anthropic_tools, final_tool_choice) =
-            Self::prepare_tools_and_choice(tools, self.config.tools.as_deref(), &self.config.tool_choice);
+        let (anthropic_tools, final_tool_choice) = Self::prepare_tools_and_choice(
+            tools,
+            self.config.tools.as_deref(),
+            &self.config.tool_choice,
+        );
 
         let thinking = if self.config.reasoning {
             Some(ThinkingConfig {
@@ -841,8 +895,11 @@ impl ChatProvider for Anthropic {
         }
 
         let anthropic_messages = Self::convert_messages_to_anthropic(messages);
-        let (anthropic_tools, final_tool_choice) =
-            Self::prepare_tools_and_choice(tools, self.config.tools.as_deref(), &self.config.tool_choice);
+        let (anthropic_tools, final_tool_choice) = Self::prepare_tools_and_choice(
+            tools,
+            self.config.tools.as_deref(),
+            &self.config.tool_choice,
+        );
 
         let req_body = AnthropicCompleteRequest {
             messages: anthropic_messages,

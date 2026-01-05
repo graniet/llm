@@ -558,6 +558,50 @@ impl Google {
             client,
         }
     }
+
+    pub fn api_key(&self) -> &str {
+        &self.config.api_key
+    }
+
+    pub fn model(&self) -> &str {
+        &self.config.model
+    }
+
+    pub fn max_tokens(&self) -> Option<u32> {
+        self.config.max_tokens
+    }
+
+    pub fn temperature(&self) -> Option<f32> {
+        self.config.temperature
+    }
+
+    pub fn timeout_seconds(&self) -> Option<u64> {
+        self.config.timeout_seconds
+    }
+
+    pub fn system(&self) -> Option<&str> {
+        self.config.system.as_deref()
+    }
+
+    pub fn top_p(&self) -> Option<f32> {
+        self.config.top_p
+    }
+
+    pub fn top_k(&self) -> Option<u32> {
+        self.config.top_k
+    }
+
+    pub fn json_schema(&self) -> Option<&StructuredOutputFormat> {
+        self.config.json_schema.as_ref()
+    }
+
+    pub fn tools(&self) -> Option<&[Tool]> {
+        self.config.tools.as_deref()
+    }
+
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
 }
 
 #[async_trait]
@@ -655,21 +699,21 @@ impl ChatProvider for Google {
         } else {
             // If json_schema and json_schema.schema are not None, use json_schema.schema as the response schema and set response_mime_type to JSON
             // Google's API doesn't need the schema to have a "name" field, so we can just use the schema directly.
-            let (response_mime_type, response_schema) = if let Some(json_schema) = &self.config.json_schema
-            {
-                if let Some(schema) = &json_schema.schema {
-                    // If the schema has an "additionalProperties" field (as required by OpenAI), remove it as Google's API doesn't support it
-                    let mut schema = schema.clone();
-                    if let Some(obj) = schema.as_object_mut() {
-                        obj.remove("additionalProperties");
+            let (response_mime_type, response_schema) =
+                if let Some(json_schema) = &self.config.json_schema {
+                    if let Some(schema) = &json_schema.schema {
+                        // If the schema has an "additionalProperties" field (as required by OpenAI), remove it as Google's API doesn't support it
+                        let mut schema = schema.clone();
+                        if let Some(obj) = schema.as_object_mut() {
+                            obj.remove("additionalProperties");
+                        }
+                        (Some(GoogleResponseMimeType::Json), Some(schema))
+                    } else {
+                        (None, None)
                     }
-                    (Some(GoogleResponseMimeType::Json), Some(schema))
                 } else {
                     (None, None)
-                }
-            } else {
-                (None, None)
-            };
+                };
             Some(GoogleGenerationConfig {
                 max_output_tokens: self.config.max_tokens,
                 temperature: self.config.temperature,
@@ -823,23 +867,23 @@ impl ChatProvider for Google {
         let generation_config = {
             // If json_schema and json_schema.schema are not None, use json_schema.schema as the response schema and set response_mime_type to JSON
             // Google's API doesn't need the schema to have a "name" field, so we can just use the schema directly.
-            let (response_mime_type, response_schema) = if let Some(json_schema) = &self.config.json_schema
-            {
-                if let Some(schema) = &json_schema.schema {
-                    // If the schema has an "additionalProperties" field (as required by OpenAI), remove it as Google's API doesn't support it
-                    let mut schema = schema.clone();
+            let (response_mime_type, response_schema) =
+                if let Some(json_schema) = &self.config.json_schema {
+                    if let Some(schema) = &json_schema.schema {
+                        // If the schema has an "additionalProperties" field (as required by OpenAI), remove it as Google's API doesn't support it
+                        let mut schema = schema.clone();
 
-                    if let Some(obj) = schema.as_object_mut() {
-                        obj.remove("additionalProperties");
+                        if let Some(obj) = schema.as_object_mut() {
+                            obj.remove("additionalProperties");
+                        }
+
+                        (Some(GoogleResponseMimeType::Json), Some(schema))
+                    } else {
+                        (None, None)
                     }
-
-                    (Some(GoogleResponseMimeType::Json), Some(schema))
                 } else {
                     (None, None)
-                }
-            } else {
-                (None, None)
-            };
+                };
 
             Some(GoogleGenerationConfig {
                 max_output_tokens: self.config.max_tokens,

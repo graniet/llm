@@ -286,8 +286,13 @@ impl ChatProvider for OpenAI {
     ) -> Result<Box<dyn ChatResponse>, LLMError> {
         // Use the common prepare_messages method from the OpenAI-compatible provider
         let openai_msgs = self.provider.prepare_messages(messages);
-        let response_format: Option<OpenAIResponseFormat> =
-            self.provider.config.json_schema.as_ref().cloned().map(|s| s.into());
+        let response_format: Option<OpenAIResponseFormat> = self
+            .provider
+            .config
+            .json_schema
+            .as_ref()
+            .cloned()
+            .map(|s| s.into());
         // Convert regular tools to OpenAI format
         let tool_calls = tools
             .map(|t| t.to_vec())
@@ -324,14 +329,20 @@ impl ChatProvider for OpenAI {
             top_k: self.provider.config.top_k,
             tools: final_tools,
             tool_choice: request_tool_choice,
-            reasoning_effort: self.provider.config.reasoning_effort.as_deref().map(|s| s.to_owned()),
+            reasoning_effort: self
+                .provider
+                .config
+                .reasoning_effort
+                .as_deref()
+                .map(|s| s.to_owned()),
             response_format,
             stream_options: None,
             extra_body: self.provider.config.extra_body.clone(),
         };
         let url = self
             .provider
-            .config.base_url
+            .config
+            .base_url
             .join("chat/completions")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
         let mut request = self
@@ -436,15 +447,16 @@ impl ChatProvider for OpenAI {
     > {
         let openai_msgs = self.provider.prepare_messages(messages);
         // Convert regular tools to OpenAI format for streaming
-        let openai_tools: Option<Vec<OpenAITool>> = self.provider.config.tools.as_deref().map(|tools| {
-            tools
-                .iter()
-                .map(|tool| OpenAITool::Function {
-                    tool_type: tool.tool_type.clone(),
-                    function: tool.function.clone(),
-                })
-                .collect()
-        });
+        let openai_tools: Option<Vec<OpenAITool>> =
+            self.provider.config.tools.as_deref().map(|tools| {
+                tools
+                    .iter()
+                    .map(|tool| OpenAITool::Function {
+                        tool_type: tool.tool_type.clone(),
+                        function: tool.function.clone(),
+                    })
+                    .collect()
+            });
         let body = OpenAIAPIChatRequest {
             model: &self.provider.config.model,
             messages: openai_msgs,
@@ -457,7 +469,12 @@ impl ChatProvider for OpenAI {
             top_k: self.provider.config.top_k,
             tools: openai_tools,
             tool_choice: self.provider.config.tool_choice.as_ref().cloned(),
-            reasoning_effort: self.provider.config.reasoning_effort.as_deref().map(|s| s.to_owned()),
+            reasoning_effort: self
+                .provider
+                .config
+                .reasoning_effort
+                .as_deref()
+                .map(|s| s.to_owned()),
             response_format: None,
             stream_options: Some(OpenAIStreamOptions {
                 include_usage: true,
@@ -466,7 +483,8 @@ impl ChatProvider for OpenAI {
         };
         let url = self
             .provider
-            .config.base_url
+            .config
+            .base_url
             .join("chat/completions")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
         let mut request = self
@@ -523,7 +541,9 @@ impl SpeechToTextProvider for OpenAI {
 
     async fn transcribe_file(&self, file_path: &str) -> Result<String, LLMError> {
         let url = self
-            .provider.config.base_url
+            .provider
+            .config
+            .base_url
             .join("audio/transcriptions")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
@@ -535,7 +555,8 @@ impl SpeechToTextProvider for OpenAI {
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
         let mut req = self
-            .provider.client
+            .provider
+            .client
             .post(url)
             .bearer_auth(&self.provider.config.api_key)
             .multipart(form);
@@ -566,17 +587,25 @@ impl EmbeddingProvider for OpenAI {
         let body = OpenAIEmbeddingRequest {
             model: self.provider.config.model.to_string(),
             input,
-            encoding_format: self.provider.config.embedding_encoding_format.as_deref().map(|s| s.to_owned()),
+            encoding_format: self
+                .provider
+                .config
+                .embedding_encoding_format
+                .as_deref()
+                .map(|s| s.to_owned()),
             dimensions: self.provider.config.embedding_dimensions,
         };
 
         let url = self
-            .provider.config.base_url
+            .provider
+            .config
+            .base_url
             .join("embeddings")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
         let resp = self
-            .provider.client
+            .provider
+            .client
             .post(url)
             .bearer_auth(&self.provider.config.api_key)
             .json(&body)
@@ -597,12 +626,15 @@ impl ModelsProvider for OpenAI {
         _request: Option<&ModelListRequest>,
     ) -> Result<Box<dyn ModelListResponse>, LLMError> {
         let url = self
-            .provider.config.base_url
+            .provider
+            .config
+            .base_url
             .join("models")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
         let resp = self
-            .provider.client
+            .provider
+            .client
             .get(url)
             .bearer_auth(&self.provider.config.api_key)
             .send()
@@ -619,7 +651,6 @@ impl ModelsProvider for OpenAI {
 
 impl LLMProvider for OpenAI {}
 
-// Helper methods to access provider fields
 impl OpenAI {
     pub fn api_key(&self) -> &str {
         &self.provider.config.api_key
@@ -637,7 +668,7 @@ impl OpenAI {
         self.provider.config.timeout_seconds
     }
 
-    pub fn get_client(&self) -> &reqwest::Client {
+    pub fn client(&self) -> &reqwest::Client {
         &self.provider.client
     }
 
@@ -672,7 +703,12 @@ impl OpenAI {
             top_k: self.provider.config.top_k,
             tools: Some(hosted_tools),
             tool_choice: self.provider.config.tool_choice.as_ref().cloned(),
-            reasoning_effort: self.provider.config.reasoning_effort.as_deref().map(|s| s.to_owned()),
+            reasoning_effort: self
+                .provider
+                .config
+                .reasoning_effort
+                .as_deref()
+                .map(|s| s.to_owned()),
             response_format: None, // Hosted tools don't use structured output
             stream_options: None,
             extra_body: self.provider.config.extra_body.clone(),
@@ -680,7 +716,8 @@ impl OpenAI {
 
         let url = self
             .provider
-            .config.base_url
+            .config
+            .base_url
             .join("responses") // Use responses endpoint for hosted tools
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 

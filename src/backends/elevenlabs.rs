@@ -105,7 +105,14 @@ impl ElevenLabs {
         timeout_seconds: Option<u64>,
         voice: Option<String>,
     ) -> Self {
-        Self::with_client(Client::new(), api_key, model_id, base_url, timeout_seconds, voice)
+        Self::with_client(
+            Client::new(),
+            api_key,
+            model_id,
+            base_url,
+            timeout_seconds,
+            voice,
+        )
     }
 
     /// Creates a new ElevenLabs instance with a custom HTTP client.
@@ -127,6 +134,30 @@ impl ElevenLabs {
             }),
             client,
         }
+    }
+
+    pub fn api_key(&self) -> &str {
+        &self.config.api_key
+    }
+
+    pub fn model_id(&self) -> &str {
+        &self.config.model_id
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.config.base_url
+    }
+
+    pub fn timeout_seconds(&self) -> Option<u64> {
+        self.config.timeout_seconds
+    }
+
+    pub fn voice(&self) -> Option<&str> {
+        self.config.voice.as_deref()
+    }
+
+    pub fn client(&self) -> &Client {
+        &self.client
     }
 }
 
@@ -306,7 +337,8 @@ impl TextToSpeechProvider for ElevenLabs {
         let url = format!(
             "{}/text-to-speech/{}?output_format=mp3_44100_128",
             self.config.base_url,
-            self.config.voice
+            self.config
+                .voice
                 .clone()
                 .unwrap_or("JBFqnCBsd6RMkjVDRZzb".to_string())
         );

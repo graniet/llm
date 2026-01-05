@@ -143,12 +143,17 @@ impl EmbeddingProvider for Cohere {
         let body = CohereEmbeddingRequest {
             model: self.config.model.to_owned(),
             input,
-            encoding_format: self.config.embedding_encoding_format.as_deref().map(|s| s.to_owned()),
+            encoding_format: self
+                .config
+                .embedding_encoding_format
+                .as_deref()
+                .map(|s| s.to_owned()),
             dimensions: self.config.embedding_dimensions,
         };
 
         let url = self
-            .config.base_url
+            .config
+            .base_url
             .join("embeddings")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 

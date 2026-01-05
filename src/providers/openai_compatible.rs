@@ -405,8 +405,13 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
         };
         let config = OpenAICompatibleProviderConfig {
             api_key: api_key.into(),
-            base_url: Url::parse(&format!("{}/", base_url.unwrap_or_else(|| T::DEFAULT_BASE_URL.to_owned()).trim_end_matches("/")))
-                .expect("Failed to parse base URL"),
+            base_url: Url::parse(&format!(
+                "{}/",
+                base_url
+                    .unwrap_or_else(|| T::DEFAULT_BASE_URL.to_owned())
+                    .trim_end_matches("/")
+            ))
+            .expect("Failed to parse base URL"),
             model: model.unwrap_or_else(|| T::DEFAULT_MODEL.to_string()),
             max_tokens,
             temperature,
@@ -430,6 +435,86 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
             client,
             _phantom: PhantomData,
         }
+    }
+
+    pub fn api_key(&self) -> &str {
+        &self.config.api_key
+    }
+
+    pub fn base_url(&self) -> &Url {
+        &self.config.base_url
+    }
+
+    pub fn model(&self) -> &str {
+        &self.config.model
+    }
+
+    pub fn max_tokens(&self) -> Option<u32> {
+        self.config.max_tokens
+    }
+
+    pub fn temperature(&self) -> Option<f32> {
+        self.config.temperature
+    }
+
+    pub fn system(&self) -> Option<&str> {
+        self.config.system.as_deref()
+    }
+
+    pub fn timeout_seconds(&self) -> Option<u64> {
+        self.config.timeout_seconds
+    }
+
+    pub fn top_p(&self) -> Option<f32> {
+        self.config.top_p
+    }
+
+    pub fn top_k(&self) -> Option<u32> {
+        self.config.top_k
+    }
+
+    pub fn tools(&self) -> Option<&[Tool]> {
+        self.config.tools.as_deref()
+    }
+
+    pub fn tool_choice(&self) -> Option<&ToolChoice> {
+        self.config.tool_choice.as_ref()
+    }
+
+    pub fn reasoning_effort(&self) -> Option<&str> {
+        self.config.reasoning_effort.as_deref()
+    }
+
+    pub fn json_schema(&self) -> Option<&StructuredOutputFormat> {
+        self.config.json_schema.as_ref()
+    }
+
+    pub fn voice(&self) -> Option<&str> {
+        self.config.voice.as_deref()
+    }
+
+    pub fn extra_body(&self) -> &serde_json::Map<String, serde_json::Value> {
+        &self.config.extra_body
+    }
+
+    pub fn parallel_tool_calls(&self) -> bool {
+        self.config.parallel_tool_calls
+    }
+
+    pub fn embedding_encoding_format(&self) -> Option<&str> {
+        self.config.embedding_encoding_format.as_deref()
+    }
+
+    pub fn embedding_dimensions(&self) -> Option<u32> {
+        self.config.embedding_dimensions
+    }
+
+    pub fn normalize_response(&self) -> bool {
+        self.config.normalize_response
+    }
+
+    pub fn client(&self) -> &Client {
+        &self.client
     }
 
     pub fn prepare_messages(&self, messages: &[ChatMessage]) -> Vec<OpenAIChatMessage<'_>> {
@@ -494,7 +579,9 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
         } else {
             None
         };
-        let request_tools = tools.map(|t| t.to_vec()).or_else(|| self.config.tools.clone());
+        let request_tools = tools
+            .map(|t| t.to_vec())
+            .or_else(|| self.config.tools.clone());
         let request_tool_choice = if request_tools.is_some() {
             self.config.tool_choice.clone()
         } else {
@@ -527,10 +614,15 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
             extra_body: self.config.extra_body.clone(),
         };
         let url = self
-            .config.base_url
+            .config
+            .base_url
             .join(T::CHAT_ENDPOINT)
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
-        let mut request = self.client.post(url).bearer_auth(&self.config.api_key).json(&body);
+        let mut request = self
+            .client
+            .post(url)
+            .bearer_auth(&self.config.api_key)
+            .json(&body);
         // Add custom headers if provider specifies them
         if let Some(headers) = T::custom_headers() {
             for (key, value) in headers {
@@ -643,10 +735,15 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
             extra_body: self.config.extra_body.clone(),
         };
         let url = self
-            .config.base_url
+            .config
+            .base_url
             .join(T::CHAT_ENDPOINT)
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
-        let mut request = self.client.post(url).bearer_auth(&self.config.api_key).json(&body);
+        let mut request = self
+            .client
+            .post(url)
+            .bearer_auth(&self.config.api_key)
+            .json(&body);
         if let Some(headers) = T::custom_headers() {
             for (key, value) in headers {
                 request = request.header(key, value);
@@ -703,7 +800,9 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
         let openai_msgs = self.prepare_messages(messages);
 
         // Use provided tools or fall back to configured tools
-        let effective_tools = tools.map(|t| t.to_vec()).or_else(|| self.config.tools.clone());
+        let effective_tools = tools
+            .map(|t| t.to_vec())
+            .or_else(|| self.config.tools.clone());
 
         let body = OpenAIChatRequest {
             model: &self.config.model,
@@ -737,11 +836,16 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
         };
 
         let url = self
-            .config.base_url
+            .config
+            .base_url
             .join(T::CHAT_ENDPOINT)
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
-        let mut request = self.client.post(url).bearer_auth(&self.config.api_key).json(&body);
+        let mut request = self
+            .client
+            .post(url)
+            .bearer_auth(&self.config.api_key)
+            .json(&body);
 
         if let Some(headers) = T::custom_headers() {
             for (key, value) in headers {

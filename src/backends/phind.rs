@@ -131,6 +131,42 @@ impl Phind {
         }
     }
 
+    pub fn model(&self) -> &str {
+        &self.config.model
+    }
+
+    pub fn max_tokens(&self) -> Option<u32> {
+        self.config.max_tokens
+    }
+
+    pub fn temperature(&self) -> Option<f32> {
+        self.config.temperature
+    }
+
+    pub fn timeout_seconds(&self) -> Option<u64> {
+        self.config.timeout_seconds
+    }
+
+    pub fn system(&self) -> Option<&str> {
+        self.config.system.as_deref()
+    }
+
+    pub fn top_p(&self) -> Option<f32> {
+        self.config.top_p
+    }
+
+    pub fn top_k(&self) -> Option<u32> {
+        self.config.top_k
+    }
+
+    pub fn api_base_url(&self) -> &str {
+        &self.config.api_base_url
+    }
+
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+
     /// Creates the required headers for API requests.
     fn create_headers() -> Result<HeaderMap, LLMError> {
         let mut headers = HeaderMap::new();
