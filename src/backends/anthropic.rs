@@ -3,6 +3,7 @@
 //! This module provides integration with Anthropic's Claude models through their API.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::{
     builder::LLMBackend,
@@ -26,24 +27,51 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Configuration for the Anthropic client.
+///
+/// This struct holds all configuration options and is wrapped in an `Arc`
+/// to enable cheap cloning of the `Anthropic` client.
+#[derive(Debug)]
+pub struct AnthropicConfig {
+    /// API key for authentication with Anthropic.
+    pub api_key: String,
+    /// Model identifier (e.g., "claude-3-sonnet-20240229").
+    pub model: String,
+    /// Maximum tokens to generate in responses.
+    pub max_tokens: u32,
+    /// Sampling temperature for response randomness.
+    pub temperature: f32,
+    /// Request timeout in seconds.
+    pub timeout_seconds: u64,
+    /// System prompt to guide model behavior.
+    pub system: String,
+    /// Top-p (nucleus) sampling parameter.
+    pub top_p: Option<f32>,
+    /// Top-k sampling parameter.
+    pub top_k: Option<u32>,
+    /// Available tools for the model to use.
+    pub tools: Option<Vec<Tool>>,
+    /// Tool choice configuration.
+    pub tool_choice: Option<ToolChoice>,
+    /// Whether extended thinking is enabled.
+    pub reasoning: bool,
+    /// Budget tokens for extended thinking.
+    pub thinking_budget_tokens: Option<u32>,
+}
+
 /// Client for interacting with Anthropic's API.
 ///
 /// Provides methods for chat and completion requests using Anthropic's models.
-#[derive(Debug)]
+///
+/// The client uses `Arc` internally for configuration, making cloning cheap
+/// (only an atomic reference count increment). This allows sharing a single
+/// client across multiple tasks without expensive deep copies.
+#[derive(Debug, Clone)]
 pub struct Anthropic {
-    pub api_key: String,
-    pub model: String,
-    pub max_tokens: u32,
-    pub temperature: f32,
-    pub timeout_seconds: u64,
-    pub system: String,
-    pub top_p: Option<f32>,
-    pub top_k: Option<u32>,
-    pub tools: Option<Vec<Tool>>,
-    pub tool_choice: Option<ToolChoice>,
-    pub reasoning: bool,
-    pub thinking_budget_tokens: Option<u32>,
-    client: Client,
+    /// Shared configuration wrapped in Arc for cheap cloning.
+    pub config: Arc<AnthropicConfig>,
+    /// HTTP client for making requests.
+    pub client: Client,
 }
 
 /// Anthropic-specific tool format that matches their API structure
@@ -469,7 +497,6 @@ impl Anthropic {
     /// * `temperature` - Sampling temperature (defaults to 0.7)
     /// * `timeout_seconds` - Request timeout in seconds (defaults to 30)
     /// * `system` - System prompt (defaults to "You are a helpful assistant.")
-    /// *
     /// * `thinking_budget_tokens` - Budget tokens for thinking (optional)
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -486,25 +513,159 @@ impl Anthropic {
         reasoning: Option<bool>,
         thinking_budget_tokens: Option<u32>,
     ) -> Self {
+        let timeout = timeout_seconds.unwrap_or(30);
         let mut builder = Client::builder();
-        if let Some(sec) = timeout_seconds {
-            builder = builder.timeout(std::time::Duration::from_secs(sec));
+        if timeout > 0 {
+            builder = builder.timeout(std::time::Duration::from_secs(timeout));
         }
-        Self {
-            api_key: api_key.into(),
-            model: model.unwrap_or_else(|| "claude-3-sonnet-20240229".to_string()),
-            max_tokens: max_tokens.unwrap_or(300),
-            temperature: temperature.unwrap_or(0.7),
-            system: system.unwrap_or_else(|| "You are a helpful assistant.".to_string()),
-            timeout_seconds: timeout_seconds.unwrap_or(30),
+        Self::with_client(
+            builder.build().expect("Failed to build reqwest Client"),
+            api_key,
+            model,
+            max_tokens,
+            temperature,
+            timeout_seconds,
+            system,
             top_p,
             top_k,
             tools,
             tool_choice,
-            reasoning: reasoning.unwrap_or(false),
+            reasoning,
             thinking_budget_tokens,
-            client: builder.build().expect("Failed to build reqwest Client"),
+        )
+    }
+
+    /// Creates a new Anthropic client with a custom HTTP client.
+    ///
+    /// This constructor allows sharing a pre-configured `reqwest::Client` across
+    /// multiple provider instances, enabling connection pooling and custom
+    /// HTTP settings.
+    ///
+    /// # Arguments
+    ///
+    /// * `client` - A pre-configured `reqwest::Client` for HTTP requests
+    /// * `api_key` - Anthropic API key for authentication
+    /// * `model` - Model identifier (defaults to "claude-3-sonnet-20240229")
+    /// * `max_tokens` - Maximum tokens in response (defaults to 300)
+    /// * `temperature` - Sampling temperature (defaults to 0.7)
+    /// * `timeout_seconds` - Request timeout in seconds (defaults to 30)
+    /// * `system` - System prompt (defaults to "You are a helpful assistant.")
+    /// * `thinking_budget_tokens` - Budget tokens for thinking (optional)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use reqwest::Client;
+    /// use std::time::Duration;
+    ///
+    /// // Create a shared client with custom settings
+    /// let shared_client = Client::builder()
+    ///     .timeout(Duration::from_secs(120))
+    ///     .build()
+    ///     .unwrap();
+    ///
+    /// // Use the shared client for multiple Anthropic instances
+    /// let anthropic = llm::backends::anthropic::Anthropic::with_client(
+    ///     shared_client.clone(),
+    ///     "your-api-key",
+    ///     Some("claude-3-opus-20240229".to_string()),
+    ///     Some(1000),
+    ///     Some(0.7),
+    ///     Some(120),
+    ///     Some("You are a helpful assistant.".to_string()),
+    ///     None,
+    ///     None,
+    ///     None,
+    ///     None,
+    ///     None,
+    ///     None,
+    /// );
+    /// ```
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_client(
+        client: Client,
+        api_key: impl Into<String>,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<String>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+        tools: Option<Vec<Tool>>,
+        tool_choice: Option<ToolChoice>,
+        reasoning: Option<bool>,
+        thinking_budget_tokens: Option<u32>,
+    ) -> Self {
+        Self {
+            config: Arc::new(AnthropicConfig {
+                api_key: api_key.into(),
+                model: model.unwrap_or_else(|| "claude-3-sonnet-20240229".to_string()),
+                max_tokens: max_tokens.unwrap_or(300),
+                temperature: temperature.unwrap_or(0.7),
+                system: system.unwrap_or_else(|| "You are a helpful assistant.".to_string()),
+                timeout_seconds: timeout_seconds.unwrap_or(30),
+                top_p,
+                top_k,
+                tools,
+                tool_choice,
+                reasoning: reasoning.unwrap_or(false),
+                thinking_budget_tokens,
+            }),
+            client,
         }
+    }
+
+    pub fn api_key(&self) -> &str {
+        &self.config.api_key
+    }
+
+    pub fn model(&self) -> &str {
+        &self.config.model
+    }
+
+    pub fn max_tokens(&self) -> u32 {
+        self.config.max_tokens
+    }
+
+    pub fn temperature(&self) -> f32 {
+        self.config.temperature
+    }
+
+    pub fn timeout_seconds(&self) -> u64 {
+        self.config.timeout_seconds
+    }
+
+    pub fn system(&self) -> &str {
+        &self.config.system
+    }
+
+    pub fn top_p(&self) -> Option<f32> {
+        self.config.top_p
+    }
+
+    pub fn top_k(&self) -> Option<u32> {
+        self.config.top_k
+    }
+
+    pub fn tools(&self) -> Option<&[Tool]> {
+        self.config.tools.as_deref()
+    }
+
+    pub fn tool_choice(&self) -> Option<&ToolChoice> {
+        self.config.tool_choice.as_ref()
+    }
+
+    pub fn reasoning(&self) -> bool {
+        self.config.reasoning
+    }
+
+    pub fn thinking_budget_tokens(&self) -> Option<u32> {
+        self.config.thinking_budget_tokens
+    }
+
+    pub fn client(&self) -> &Client {
+        &self.client
     }
 }
 
@@ -525,18 +686,21 @@ impl ChatProvider for Anthropic {
         messages: &[ChatMessage],
         tools: Option<&[Tool]>,
     ) -> Result<Box<dyn ChatResponse>, LLMError> {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Anthropic API key".to_string()));
         }
 
         let anthropic_messages = Self::convert_messages_to_anthropic(messages);
-        let (anthropic_tools, final_tool_choice) =
-            Self::prepare_tools_and_choice(tools, self.tools.as_deref(), &self.tool_choice);
+        let (anthropic_tools, final_tool_choice) = Self::prepare_tools_and_choice(
+            tools,
+            self.config.tools.as_deref(),
+            &self.config.tool_choice,
+        );
 
-        let thinking = if self.reasoning {
+        let thinking = if self.config.reasoning {
             Some(ThinkingConfig {
                 thinking_type: "enabled".to_string(),
-                budget_tokens: self.thinking_budget_tokens.unwrap_or(16000),
+                budget_tokens: self.config.thinking_budget_tokens.unwrap_or(16000),
             })
         } else {
             None
@@ -544,13 +708,13 @@ impl ChatProvider for Anthropic {
 
         let req_body = AnthropicCompleteRequest {
             messages: anthropic_messages,
-            model: &self.model,
-            max_tokens: Some(self.max_tokens),
-            temperature: Some(self.temperature),
-            system: Some(&self.system),
+            model: &self.config.model,
+            max_tokens: Some(self.config.max_tokens),
+            temperature: Some(self.config.temperature),
+            system: Some(&self.config.system),
             stream: Some(false),
-            top_p: self.top_p,
-            top_k: self.top_k,
+            top_p: self.config.top_p,
+            top_k: self.config.top_k,
             tools: anthropic_tools,
             tool_choice: final_tool_choice,
             thinking,
@@ -559,13 +723,13 @@ impl ChatProvider for Anthropic {
         let mut request = self
             .client
             .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &self.api_key)
+            .header("x-api-key", &self.config.api_key)
             .header("Content-Type", "application/json")
             .header("anthropic-version", "2023-06-01")
             .json(&req_body);
 
-        if self.timeout_seconds > 0 {
-            request = request.timeout(std::time::Duration::from_secs(self.timeout_seconds));
+        if self.config.timeout_seconds > 0 {
+            request = request.timeout(std::time::Duration::from_secs(self.config.timeout_seconds));
         }
 
         if log::log_enabled!(log::Level::Trace) {
@@ -613,7 +777,7 @@ impl ChatProvider for Anthropic {
         messages: &[ChatMessage],
     ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send>>, LLMError>
     {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Anthropic API key".to_string()));
         }
 
@@ -671,13 +835,13 @@ impl ChatProvider for Anthropic {
 
         let req_body = AnthropicCompleteRequest {
             messages: anthropic_messages,
-            model: &self.model,
-            max_tokens: Some(self.max_tokens),
-            temperature: Some(self.temperature),
-            system: Some(&self.system),
+            model: &self.config.model,
+            max_tokens: Some(self.config.max_tokens),
+            temperature: Some(self.config.temperature),
+            system: Some(&self.config.system),
             stream: Some(true),
-            top_p: self.top_p,
-            top_k: self.top_k,
+            top_p: self.config.top_p,
+            top_k: self.config.top_k,
             tools: None,
             tool_choice: None,
             thinking: None,
@@ -686,13 +850,13 @@ impl ChatProvider for Anthropic {
         let mut request = self
             .client
             .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &self.api_key)
+            .header("x-api-key", &self.config.api_key)
             .header("Content-Type", "application/json")
             .header("anthropic-version", "2023-06-01")
             .json(&req_body);
 
-        if self.timeout_seconds > 0 {
-            request = request.timeout(std::time::Duration::from_secs(self.timeout_seconds));
+        if self.config.timeout_seconds > 0 {
+            request = request.timeout(std::time::Duration::from_secs(self.config.timeout_seconds));
         }
 
         let response = request.send().await?;
@@ -726,23 +890,26 @@ impl ChatProvider for Anthropic {
         tools: Option<&[Tool]>,
     ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Result<StreamChunk, LLMError>> + Send>>, LLMError>
     {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Anthropic API key".to_string()));
         }
 
         let anthropic_messages = Self::convert_messages_to_anthropic(messages);
-        let (anthropic_tools, final_tool_choice) =
-            Self::prepare_tools_and_choice(tools, self.tools.as_deref(), &self.tool_choice);
+        let (anthropic_tools, final_tool_choice) = Self::prepare_tools_and_choice(
+            tools,
+            self.config.tools.as_deref(),
+            &self.config.tool_choice,
+        );
 
         let req_body = AnthropicCompleteRequest {
             messages: anthropic_messages,
-            model: &self.model,
-            max_tokens: Some(self.max_tokens),
-            temperature: Some(self.temperature),
-            system: Some(&self.system),
+            model: &self.config.model,
+            max_tokens: Some(self.config.max_tokens),
+            temperature: Some(self.config.temperature),
+            system: Some(&self.config.system),
             stream: Some(true),
-            top_p: self.top_p,
-            top_k: self.top_k,
+            top_p: self.config.top_p,
+            top_k: self.config.top_k,
             tools: anthropic_tools,
             tool_choice: final_tool_choice,
             thinking: None, // Thinking not supported with streaming tools
@@ -751,13 +918,13 @@ impl ChatProvider for Anthropic {
         let mut request = self
             .client
             .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &self.api_key)
+            .header("x-api-key", &self.config.api_key)
             .header("Content-Type", "application/json")
             .header("anthropic-version", "2023-06-01")
             .json(&req_body);
 
-        if self.timeout_seconds > 0 {
-            request = request.timeout(std::time::Duration::from_secs(self.timeout_seconds));
+        if self.config.timeout_seconds > 0 {
+            request = request.timeout(std::time::Duration::from_secs(self.config.timeout_seconds));
         }
 
         if log::log_enabled!(log::Level::Trace) {
@@ -924,7 +1091,7 @@ impl ModelsProvider for Anthropic {
         let resp = self
             .client
             .get("https://api.anthropic.com/v1/models")
-            .header("x-api-key", &self.api_key)
+            .header("x-api-key", &self.config.api_key)
             .header("Content-Type", "application/json")
             .header("anthropic-version", "2023-06-01")
             .send()
@@ -938,7 +1105,7 @@ impl ModelsProvider for Anthropic {
 
 impl crate::LLMProvider for Anthropic {
     fn tools(&self) -> Option<&[Tool]> {
-        self.tools.as_deref()
+        self.config.tools.as_deref()
     }
 }
 

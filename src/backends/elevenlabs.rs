@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::chat::{ChatMessage, ChatProvider, ChatResponse, Tool};
 use crate::completion::{CompletionProvider, CompletionRequest, CompletionResponse};
 use crate::embedding::EmbeddingProvider;
@@ -12,23 +14,34 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+/// Configuration for the ElevenLabs client.
+#[derive(Debug)]
+/// Configuration for the ElevenLabs client.
+pub struct ElevenLabsConfig {
+    /// API key for authentication.
+    pub api_key: String,
+    /// Model identifier.
+    pub model_id: String,
+    /// Base URL for API requests.
+    pub base_url: String,
+    /// Request timeout in seconds.
+    pub timeout_seconds: Option<u64>,
+    /// Voice setting for TTS.
+    pub voice: Option<String>,
+}
+
 /// ElevenLabs speech to text backend implementation
 ///
 /// This struct provides functionality for speech-to-text transcription using the ElevenLabs API.
 /// It implements various LLM provider traits but only supports speech-to-text functionality.
+///
+/// The client uses `Arc` internally for configuration, making cloning cheap.
+#[derive(Debug, Clone)]
 pub struct ElevenLabs {
-    /// API key for ElevenLabs authentication
-    api_key: String,
-    /// Model identifier for speech-to-text
-    model_id: String,
-    /// Base URL for API requests
-    base_url: String,
-    /// Optional timeout duration in seconds
-    timeout_seconds: Option<u64>,
-    /// HTTP client for making requests
-    client: Client,
-    /// Voice ID to use for speech synthesis
-    voice: Option<String>,
+    /// Shared configuration wrapped in Arc for cheap cloning.
+    pub config: Arc<ElevenLabsConfig>,
+    /// HTTP client for making requests.
+    pub client: Client,
 }
 
 /// Internal representation of a word from ElevenLabs API response
@@ -92,14 +105,59 @@ impl ElevenLabs {
         timeout_seconds: Option<u64>,
         voice: Option<String>,
     ) -> Self {
-        Self {
+        Self::with_client(
+            Client::new(),
             api_key,
             model_id,
             base_url,
             timeout_seconds,
-            client: Client::new(),
             voice,
+        )
+    }
+
+    /// Creates a new ElevenLabs instance with a custom HTTP client.
+    pub fn with_client(
+        client: Client,
+        api_key: String,
+        model_id: String,
+        base_url: String,
+        timeout_seconds: Option<u64>,
+        voice: Option<String>,
+    ) -> Self {
+        Self {
+            config: Arc::new(ElevenLabsConfig {
+                api_key,
+                model_id,
+                base_url,
+                timeout_seconds,
+                voice,
+            }),
+            client,
         }
+    }
+
+    pub fn api_key(&self) -> &str {
+        &self.config.api_key
+    }
+
+    pub fn model_id(&self) -> &str {
+        &self.config.model_id
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.config.base_url
+    }
+
+    pub fn timeout_seconds(&self) -> Option<u64> {
+        self.config.timeout_seconds
+    }
+
+    pub fn voice(&self) -> Option<&str> {
+        self.config.voice.as_deref()
+    }
+
+    pub fn client(&self) -> &Client {
+        &self.client
     }
 }
 
@@ -116,19 +174,19 @@ impl SpeechToTextProvider for ElevenLabs {
     /// * `Ok(String)` - Transcribed text
     /// * `Err(LLMError)` - Error if transcription fails
     async fn transcribe(&self, audio: Vec<u8>) -> Result<String, LLMError> {
-        let url = format!("{}/speech-to-text", self.base_url);
+        let url = format!("{}/speech-to-text", self.config.base_url);
         let part = reqwest::multipart::Part::bytes(audio).file_name("audio.wav");
         let form = reqwest::multipart::Form::new()
-            .text("model_id", self.model_id.clone())
+            .text("model_id", self.config.model_id.clone())
             .part("file", part);
 
         let mut req = self
             .client
             .post(url)
-            .header("xi-api-key", &self.api_key)
+            .header("xi-api-key", &self.config.api_key)
             .multipart(form);
 
-        if let Some(t) = self.timeout_seconds {
+        if let Some(t) = self.config.timeout_seconds {
             req = req.timeout(Duration::from_secs(t));
         }
 
@@ -169,9 +227,9 @@ impl SpeechToTextProvider for ElevenLabs {
     /// * `Ok(String)` - Transcribed text
     /// * `Err(LLMError)` - Error if transcription fails
     async fn transcribe_file(&self, file_path: &str) -> Result<String, LLMError> {
-        let url = format!("{}/speech-to-text", self.base_url);
+        let url = format!("{}/speech-to-text", self.config.base_url);
         let form = reqwest::multipart::Form::new()
-            .text("model_id", self.model_id.clone())
+            .text("model_id", self.config.model_id.clone())
             .file("file", file_path)
             .await
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
@@ -179,10 +237,10 @@ impl SpeechToTextProvider for ElevenLabs {
         let mut req = self
             .client
             .post(url)
-            .header("xi-api-key", &self.api_key)
+            .header("xi-api-key", &self.config.api_key)
             .multipart(form);
 
-        if let Some(t) = self.timeout_seconds {
+        if let Some(t) = self.config.timeout_seconds {
             req = req.timeout(Duration::from_secs(t));
         }
 
@@ -278,25 +336,26 @@ impl TextToSpeechProvider for ElevenLabs {
     async fn speech(&self, text: &str) -> Result<Vec<u8>, LLMError> {
         let url = format!(
             "{}/text-to-speech/{}?output_format=mp3_44100_128",
-            self.base_url,
-            self.voice
+            self.config.base_url,
+            self.config
+                .voice
                 .clone()
                 .unwrap_or("JBFqnCBsd6RMkjVDRZzb".to_string())
         );
 
         let body = serde_json::json!({
             "text": text,
-            "model_id": self.model_id
+            "model_id": self.config.model_id
         });
 
         let mut req = self
             .client
             .post(url)
-            .header("xi-api-key", &self.api_key)
+            .header("xi-api-key", &self.config.api_key)
             .header("Content-Type", "application/json")
             .json(&body);
 
-        if let Some(t) = self.timeout_seconds {
+        if let Some(t) = self.config.timeout_seconds {
             req = req.timeout(Duration::from_secs(t));
         }
 

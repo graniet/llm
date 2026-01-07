@@ -22,31 +22,60 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::pin::Pin;
+use std::sync::Arc;
+
+/// Configuration for OpenAI-compatible providers.
+#[derive(Debug)]
+pub struct OpenAICompatibleProviderConfig {
+    /// API key for authentication.
+    pub api_key: String,
+    /// Base URL for API requests.
+    pub base_url: Url,
+    /// Model identifier.
+    pub model: String,
+    /// Maximum tokens to generate in responses.
+    pub max_tokens: Option<u32>,
+    /// Sampling temperature for response randomness.
+    pub temperature: Option<f32>,
+    /// System prompt to guide model behavior.
+    pub system: Option<String>,
+    /// Request timeout in seconds.
+    pub timeout_seconds: Option<u64>,
+    /// Top-p (nucleus) sampling parameter.
+    pub top_p: Option<f32>,
+    /// Top-k sampling parameter.
+    pub top_k: Option<u32>,
+    /// Available tools for the model to use.
+    pub tools: Option<Vec<Tool>>,
+    /// Tool choice configuration.
+    pub tool_choice: Option<ToolChoice>,
+    /// Reasoning effort level for supported models.
+    pub reasoning_effort: Option<String>,
+    /// JSON schema for structured output.
+    pub json_schema: Option<StructuredOutputFormat>,
+    /// Voice setting for TTS.
+    pub voice: Option<String>,
+    /// Extra body parameters for custom fields.
+    pub extra_body: serde_json::Map<String, serde_json::Value>,
+    /// Whether to enable parallel tool calls.
+    pub parallel_tool_calls: bool,
+    /// Encoding format for embeddings.
+    pub embedding_encoding_format: Option<String>,
+    /// Dimensions for embeddings.
+    pub embedding_dimensions: Option<u32>,
+    /// Whether to normalize streaming responses.
+    pub normalize_response: bool,
+}
 
 /// Generic OpenAI-compatible provider
 ///
 /// This struct provides a base implementation for any OpenAI-compatible API.
 /// Different providers can customize behavior by implementing the `OpenAICompatibleConfig` trait.
+#[derive(Debug, Clone)]
 pub struct OpenAICompatibleProvider<T: OpenAIProviderConfig> {
-    pub api_key: String,
-    pub base_url: Url,
-    pub model: String,
-    pub max_tokens: Option<u32>,
-    pub temperature: Option<f32>,
-    pub system: Option<String>,
-    pub timeout_seconds: Option<u64>,
-    pub top_p: Option<f32>,
-    pub top_k: Option<u32>,
-    pub tools: Option<Vec<Tool>>,
-    pub tool_choice: Option<ToolChoice>,
-    pub reasoning_effort: Option<String>,
-    pub json_schema: Option<StructuredOutputFormat>,
-    pub voice: Option<String>,
-    pub extra_body: serde_json::Map<String, serde_json::Value>,
-    pub parallel_tool_calls: bool,
-    pub embedding_encoding_format: Option<String>,
-    pub embedding_dimensions: Option<u32>,
-    pub normalize_response: bool,
+    /// Shared configuration wrapped in Arc for cheap cloning.
+    pub config: Arc<OpenAICompatibleProviderConfig>,
+    /// HTTP client for making requests.
     pub client: Client,
     _phantom: PhantomData<T>,
 }
@@ -321,11 +350,60 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
         if let Some(sec) = timeout_seconds {
             builder = builder.timeout(std::time::Duration::from_secs(sec));
         }
+        let client = builder.build().expect("Failed to build reqwest Client");
+        Self::with_client(
+            client,
+            api_key,
+            base_url,
+            model,
+            max_tokens,
+            temperature,
+            timeout_seconds,
+            system,
+            top_p,
+            top_k,
+            tools,
+            tool_choice,
+            reasoning_effort,
+            json_schema,
+            voice,
+            extra_body,
+            parallel_tool_calls,
+            normalize_response,
+            embedding_encoding_format,
+            embedding_dimensions,
+        )
+    }
+
+    /// Creates a new provider with a custom HTTP client for connection pooling
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_client(
+        client: Client,
+        api_key: impl Into<String>,
+        base_url: Option<String>,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<String>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+        tools: Option<Vec<Tool>>,
+        tool_choice: Option<ToolChoice>,
+        reasoning_effort: Option<String>,
+        json_schema: Option<StructuredOutputFormat>,
+        voice: Option<String>,
+        extra_body: Option<serde_json::Value>,
+        parallel_tool_calls: Option<bool>,
+        normalize_response: Option<bool>,
+        embedding_encoding_format: Option<String>,
+        embedding_dimensions: Option<u32>,
+    ) -> Self {
         let extra_body = match extra_body {
             Some(serde_json::Value::Object(map)) => map,
-            _ => serde_json::Map::new(), // Should we panic here?
+            _ => serde_json::Map::new(),
         };
-        Self {
+        let config = OpenAICompatibleProviderConfig {
             api_key: api_key.into(),
             base_url: Url::parse(&format!(
                 "{}/",
@@ -351,9 +429,92 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
             normalize_response: normalize_response.unwrap_or(true),
             embedding_encoding_format,
             embedding_dimensions,
-            client: builder.build().expect("Failed to build reqwest Client"),
+        };
+        Self {
+            config: Arc::new(config),
+            client,
             _phantom: PhantomData,
         }
+    }
+
+    pub fn api_key(&self) -> &str {
+        &self.config.api_key
+    }
+
+    pub fn base_url(&self) -> &Url {
+        &self.config.base_url
+    }
+
+    pub fn model(&self) -> &str {
+        &self.config.model
+    }
+
+    pub fn max_tokens(&self) -> Option<u32> {
+        self.config.max_tokens
+    }
+
+    pub fn temperature(&self) -> Option<f32> {
+        self.config.temperature
+    }
+
+    pub fn system(&self) -> Option<&str> {
+        self.config.system.as_deref()
+    }
+
+    pub fn timeout_seconds(&self) -> Option<u64> {
+        self.config.timeout_seconds
+    }
+
+    pub fn top_p(&self) -> Option<f32> {
+        self.config.top_p
+    }
+
+    pub fn top_k(&self) -> Option<u32> {
+        self.config.top_k
+    }
+
+    pub fn tools(&self) -> Option<&[Tool]> {
+        self.config.tools.as_deref()
+    }
+
+    pub fn tool_choice(&self) -> Option<&ToolChoice> {
+        self.config.tool_choice.as_ref()
+    }
+
+    pub fn reasoning_effort(&self) -> Option<&str> {
+        self.config.reasoning_effort.as_deref()
+    }
+
+    pub fn json_schema(&self) -> Option<&StructuredOutputFormat> {
+        self.config.json_schema.as_ref()
+    }
+
+    pub fn voice(&self) -> Option<&str> {
+        self.config.voice.as_deref()
+    }
+
+    pub fn extra_body(&self) -> &serde_json::Map<String, serde_json::Value> {
+        &self.config.extra_body
+    }
+
+    pub fn parallel_tool_calls(&self) -> bool {
+        self.config.parallel_tool_calls
+    }
+
+    pub fn embedding_encoding_format(&self) -> Option<&str> {
+        self.config.embedding_encoding_format.as_deref()
+    }
+
+    pub fn embedding_dimensions(&self) -> Option<u32> {
+        self.config.embedding_dimensions
+    }
+
+    pub fn normalize_response(&self) -> bool {
+        self.config.normalize_response
+    }
+
+    pub fn client(&self) -> &Client {
+        &self.client
     }
 
     pub fn prepare_messages(&self, messages: &[ChatMessage]) -> Vec<OpenAIChatMessage<'_>> {
@@ -377,7 +538,7 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
                 }
             })
             .collect();
-        if let Some(system) = &self.system {
+        if let Some(system) = &self.config.system {
             openai_msgs.insert(
                 0,
                 OpenAIChatMessage {
@@ -406,7 +567,7 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
         messages: &[ChatMessage],
         tools: Option<&[Tool]>,
     ) -> Result<Box<dyn ChatResponse>, LLMError> {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError(format!(
                 "Missing {} API key",
                 T::PROVIDER_NAME
@@ -414,47 +575,54 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
         }
         let openai_msgs = self.prepare_messages(messages);
         let response_format: Option<OpenAIResponseFormat> = if T::SUPPORTS_STRUCTURED_OUTPUT {
-            self.json_schema.clone().map(|s| s.into())
+            self.config.json_schema.clone().map(|s| s.into())
         } else {
             None
         };
-        let request_tools = tools.map(|t| t.to_vec()).or_else(|| self.tools.clone());
+        let request_tools = tools
+            .map(|t| t.to_vec())
+            .or_else(|| self.config.tools.clone());
         let request_tool_choice = if request_tools.is_some() {
-            self.tool_choice.clone()
+            self.config.tool_choice.clone()
         } else {
             None
         };
         let reasoning_effort = if T::SUPPORTS_REASONING_EFFORT {
-            self.reasoning_effort.clone()
+            self.config.reasoning_effort.clone()
         } else {
             None
         };
         let parallel_tool_calls = if T::SUPPORTS_PARALLEL_TOOL_CALLS {
-            Some(self.parallel_tool_calls)
+            Some(self.config.parallel_tool_calls)
         } else {
             None
         };
         let body = OpenAIChatRequest {
-            model: &self.model,
+            model: &self.config.model,
             messages: openai_msgs,
-            max_tokens: self.max_tokens,
-            temperature: self.temperature,
+            max_tokens: self.config.max_tokens,
+            temperature: self.config.temperature,
             stream: false,
-            top_p: self.top_p,
-            top_k: self.top_k,
+            top_p: self.config.top_p,
+            top_k: self.config.top_k,
             tools: request_tools,
             tool_choice: request_tool_choice,
             reasoning_effort,
             response_format,
             stream_options: None,
             parallel_tool_calls,
-            extra_body: self.extra_body.clone(),
+            extra_body: self.config.extra_body.clone(),
         };
         let url = self
+            .config
             .base_url
             .join(T::CHAT_ENDPOINT)
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
-        let mut request = self.client.post(url).bearer_auth(&self.api_key).json(&body);
+        let mut request = self
+            .client
+            .post(url)
+            .bearer_auth(&self.config.api_key)
+            .json(&body);
         // Add custom headers if provider specifies them
         if let Some(headers) = T::custom_headers() {
             for (key, value) in headers {
@@ -466,7 +634,7 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
                 log::trace!("{} request payload: {}", T::PROVIDER_NAME, json);
             }
         }
-        if let Some(timeout) = self.timeout_seconds {
+        if let Some(timeout) = self.config.timeout_seconds {
             request = request.timeout(std::time::Duration::from_secs(timeout));
         }
         let response = request.send().await?;
@@ -529,7 +697,7 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
         std::pin::Pin<Box<dyn Stream<Item = Result<StreamResponse, LLMError>> + Send>>,
         LLMError,
     > {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError(format!(
                 "Missing {} API key",
                 T::PROVIDER_NAME
@@ -537,17 +705,17 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
         }
         let openai_msgs = self.prepare_messages(messages);
         let body = OpenAIChatRequest {
-            model: &self.model,
+            model: &self.config.model,
             messages: openai_msgs,
-            max_tokens: self.max_tokens,
-            temperature: self.temperature,
+            max_tokens: self.config.max_tokens,
+            temperature: self.config.temperature,
             stream: true,
-            top_p: self.top_p,
-            top_k: self.top_k,
-            tools: self.tools.clone(),
-            tool_choice: self.tool_choice.clone(),
+            top_p: self.config.top_p,
+            top_k: self.config.top_k,
+            tools: self.config.tools.clone(),
+            tool_choice: self.config.tool_choice.clone(),
             reasoning_effort: if T::SUPPORTS_REASONING_EFFORT {
-                self.reasoning_effort.clone()
+                self.config.reasoning_effort.clone()
             } else {
                 None
             },
@@ -560,17 +728,22 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
                 None
             },
             parallel_tool_calls: if T::SUPPORTS_PARALLEL_TOOL_CALLS {
-                Some(self.parallel_tool_calls)
+                Some(self.config.parallel_tool_calls)
             } else {
                 None
             },
-            extra_body: self.extra_body.clone(),
+            extra_body: self.config.extra_body.clone(),
         };
         let url = self
+            .config
             .base_url
             .join(T::CHAT_ENDPOINT)
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
-        let mut request = self.client.post(url).bearer_auth(&self.api_key).json(&body);
+        let mut request = self
+            .client
+            .post(url)
+            .bearer_auth(&self.config.api_key)
+            .json(&body);
         if let Some(headers) = T::custom_headers() {
             for (key, value) in headers {
                 request = request.header(key, value);
@@ -581,7 +754,7 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
                 log::trace!("{} request payload: {}", T::PROVIDER_NAME, json);
             }
         }
-        if let Some(timeout) = self.timeout_seconds {
+        if let Some(timeout) = self.config.timeout_seconds {
             request = request.timeout(std::time::Duration::from_secs(timeout));
         }
         let response = request.send().await?;
@@ -594,7 +767,7 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
                 raw_response: error_text,
             });
         }
-        Ok(create_sse_stream(response, self.normalize_response))
+        Ok(create_sse_stream(response, self.config.normalize_response))
     }
 
     /// Sends a streaming chat request with tool support.
@@ -617,7 +790,7 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
         tools: Option<&[Tool]>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatStreamChunk, LLMError>> + Send>>, LLMError>
     {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError(format!(
                 "Missing {} API key",
                 T::PROVIDER_NAME
@@ -627,20 +800,22 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
         let openai_msgs = self.prepare_messages(messages);
 
         // Use provided tools or fall back to configured tools
-        let effective_tools = tools.map(|t| t.to_vec()).or_else(|| self.tools.clone());
+        let effective_tools = tools
+            .map(|t| t.to_vec())
+            .or_else(|| self.config.tools.clone());
 
         let body = OpenAIChatRequest {
-            model: &self.model,
+            model: &self.config.model,
             messages: openai_msgs,
-            max_tokens: self.max_tokens,
-            temperature: self.temperature,
+            max_tokens: self.config.max_tokens,
+            temperature: self.config.temperature,
             stream: true,
-            top_p: self.top_p,
-            top_k: self.top_k,
+            top_p: self.config.top_p,
+            top_k: self.config.top_k,
             tools: effective_tools,
-            tool_choice: self.tool_choice.clone(),
+            tool_choice: self.config.tool_choice.clone(),
             reasoning_effort: if T::SUPPORTS_REASONING_EFFORT {
-                self.reasoning_effort.clone()
+                self.config.reasoning_effort.clone()
             } else {
                 None
             },
@@ -653,19 +828,24 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
                 None
             },
             parallel_tool_calls: if T::SUPPORTS_PARALLEL_TOOL_CALLS {
-                Some(self.parallel_tool_calls)
+                Some(self.config.parallel_tool_calls)
             } else {
                 None
             },
-            extra_body: self.extra_body.clone(),
+            extra_body: self.config.extra_body.clone(),
         };
 
         let url = self
+            .config
             .base_url
             .join(T::CHAT_ENDPOINT)
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
-        let mut request = self.client.post(url).bearer_auth(&self.api_key).json(&body);
+        let mut request = self
+            .client
+            .post(url)
+            .bearer_auth(&self.config.api_key)
+            .json(&body);
 
         if let Some(headers) = T::custom_headers() {
             for (key, value) in headers {
@@ -683,7 +863,7 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
             }
         }
 
-        if let Some(timeout) = self.timeout_seconds {
+        if let Some(timeout) = self.config.timeout_seconds {
             request = request.timeout(std::time::Duration::from_secs(timeout));
         }
 
