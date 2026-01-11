@@ -1178,7 +1178,7 @@ pub struct ParamBuilder {
     name: String,
     property_type: String,
     description: String,
-    items: Option<Box<ParameterProperty>>,
+    items: Option<Box<ParametersSchema>>,
     enum_list: Option<Vec<String>>,
 }
 
@@ -1207,8 +1207,8 @@ impl ParamBuilder {
     }
 
     /// Sets the array item type for array parameters
-    pub fn items(mut self, item_property: ParameterProperty) -> Self {
-        self.items = Some(Box::new(item_property));
+    pub fn items(mut self, schema_property: ParametersSchema) -> Self {
+        self.items = Some(Box::new(schema_property));
         self
     }
 
