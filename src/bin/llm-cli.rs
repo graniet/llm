@@ -127,57 +127,29 @@ fn get_provider_info(args: &CliArgs) -> Option<(String, Option<String>)> {
 fn get_api_key(backend: &LLMBackend, args: &CliArgs) -> Option<String> {
     args.api_key.clone().or_else(|| {
         let store = SecretStore::new().ok()?;
-        match backend {
-            LLMBackend::OpenAI => store
-                .get("OPENAI_API_KEY")
-                .cloned()
-                .or_else(|| std::env::var("OPENAI_API_KEY").ok()),
-            LLMBackend::Anthropic => store
-                .get("ANTHROPIC_API_KEY")
-                .cloned()
-                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok()),
-            LLMBackend::DeepSeek => store
-                .get("DEEPSEEK_API_KEY")
-                .cloned()
-                .or_else(|| std::env::var("DEEPSEEK_API_KEY").ok()),
-            LLMBackend::XAI => store
-                .get("XAI_API_KEY")
-                .cloned()
-                .or_else(|| std::env::var("XAI_API_KEY").ok()),
-            LLMBackend::Google => store
-                .get("GOOGLE_API_KEY")
-                .cloned()
-                .or_else(|| std::env::var("GOOGLE_API_KEY").ok()),
-            LLMBackend::Groq => store
-                .get("GROQ_API_KEY")
-                .cloned()
-                .or_else(|| std::env::var("GROQ_API_KEY").ok()),
-            LLMBackend::AzureOpenAI => store
-                .get("AZURE_OPENAI_API_KEY")
-                .cloned()
-                .or_else(|| std::env::var("AZURE_OPENAI_API_KEY").ok()),
-            LLMBackend::Ollama => None,
-            LLMBackend::Phind => None,
-            LLMBackend::ElevenLabs => None,
-            LLMBackend::Cohere => store
-                .get("COHERE_API_KEY")
-                .cloned()
-                .or_else(|| std::env::var("COHERE_API_KEY").ok()),
-            LLMBackend::Mistral => store
-                .get("MISTRAL_API_KEY")
-                .cloned()
-                .or_else(|| std::env::var("MISTRAL_API_KEY").ok()),
-            LLMBackend::OpenRouter => store
-                .get("OPENROUTER_API_KEY")
-                .cloned()
-                .or_else(|| std::env::var("OPENROUTER_API_KEY").ok()),
-            LLMBackend::HuggingFace => store
-                .get("HF_TOKEN")
-                .cloned()
-                .or_else(|| std::env::var("HF_TOKEN").ok()),
-            LLMBackend::AwsBedrock => None,
-        }
+        let key = backend_env_key(backend)?;
+        store.get(key).cloned().or_else(|| std::env::var(key).ok())
     })
+}
+
+fn backend_env_key(backend: &LLMBackend) -> Option<&'static str> {
+    match backend {
+        LLMBackend::OpenAI => Some("OPENAI_API_KEY"),
+        LLMBackend::Anthropic => Some("ANTHROPIC_API_KEY"),
+        LLMBackend::DeepSeek => Some("DEEPSEEK_API_KEY"),
+        LLMBackend::XAI => Some("XAI_API_KEY"),
+        LLMBackend::Google => Some("GOOGLE_API_KEY"),
+        LLMBackend::Groq => Some("GROQ_API_KEY"),
+        LLMBackend::AzureOpenAI => Some("AZURE_OPENAI_API_KEY"),
+        LLMBackend::Cohere => Some("COHERE_API_KEY"),
+        LLMBackend::Mistral => Some("MISTRAL_API_KEY"),
+        LLMBackend::OpenRouter => Some("OPENROUTER_API_KEY"),
+        LLMBackend::HuggingFace => Some("HF_TOKEN"),
+        LLMBackend::Ollama
+        | LLMBackend::Phind
+        | LLMBackend::ElevenLabs
+        | LLMBackend::AwsBedrock => None,
+    }
 }
 
 /// Processes input data and creates appropriate chat messages
@@ -193,8 +165,7 @@ fn get_api_key(backend: &LLMBackend, args: &CliArgs) -> Option<String> {
 fn process_input(input: &[u8], prompt: String) -> Vec<ChatMessage> {
     let mut messages = Vec::new();
 
-    if !input.is_empty() && detect_image_mime(input).is_some() {
-        let mime = detect_image_mime(input).unwrap();
+    if let Some(mime) = detect_image_mime(input) {
         messages.push(ChatMessage::user().content(prompt).build());
         messages.push(ChatMessage::user().image(mime, input.to_vec()).build());
     } else if !input.is_empty() {

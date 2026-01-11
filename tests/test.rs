@@ -5,6 +5,8 @@
 
 #[cfg(feature = "bedrock")]
 mod bedrock_tests {
+    use aws_config::{load_defaults, BehaviorVersion};
+    use aws_credential_types::provider::ProvideCredentials;
     use llm::backends::aws::*;
     use llm::chat::StructuredOutputFormat;
     use serde_json::json;
@@ -12,9 +14,11 @@ mod bedrock_tests {
     // Helper to check if AWS credentials are available
     // This checks if credentials can be loaded via any method (env vars, CLI, SSO, etc.)
     async fn skip_if_no_credentials() -> bool {
-        // Try to create a backend - if it fails, credentials are not available
-        // This works with all AWS credential sources (CLI, env vars, SSO, etc.)
-        BedrockBackend::from_env().await.is_err()
+        let config = load_defaults(BehaviorVersion::latest()).await;
+        let Some(provider) = config.credentials_provider() else {
+            return true;
+        };
+        provider.provide_credentials().await.is_err()
     }
 
     #[tokio::test]

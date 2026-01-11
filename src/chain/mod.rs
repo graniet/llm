@@ -4,7 +4,8 @@ use crate::{error::LLMError, LLMProvider};
 use std::collections::HashMap;
 
 pub use multi::{
-    LLMRegistry, LLMRegistryBuilder, MultiChainStepBuilder, MultiChainStepMode, MultiPromptChain,
+    LLMRegistry, LLMRegistryBuilder, MultiChainStep, MultiChainStepBuilder, MultiChainStepMode,
+    MultiPromptChain,
 };
 
 /// Execution mode for a chain step

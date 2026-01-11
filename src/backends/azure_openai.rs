@@ -317,10 +317,10 @@ impl ChatResponse for AzureOpenAIChatResponse {
 
 impl std::fmt::Display for AzureOpenAIChatResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match (
-            &self.choices.first().unwrap().message.content,
-            &self.choices.first().unwrap().message.tool_calls,
-        ) {
+        let Some(choice) = self.choices.first() else {
+            return Ok(());
+        };
+        match (&choice.message.content, &choice.message.tool_calls) {
             (Some(content), Some(tool_calls)) => {
                 for tool_call in tool_calls {
                     write!(f, "{tool_call}")?;
@@ -334,7 +334,7 @@ impl std::fmt::Display for AzureOpenAIChatResponse {
                 }
                 Ok(())
             }
-            (None, None) => write!(f, ""),
+            (None, None) => Ok(()),
         }
     }
 }

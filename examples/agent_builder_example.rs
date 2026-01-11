@@ -84,7 +84,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build();
     _ = proposer.chat(&[task]).await;
 
-    let mut receiver = shared_memory.subscribe();
+    let Some(mut receiver) = shared_memory.subscribe() else {
+        eprintln!("No shared memory subscriber available");
+        return Ok(());
+    };
+
     while let Ok(evt) = receiver.recv().await {
         println!("{} said: {}", evt.role, evt.msg.content);
     }

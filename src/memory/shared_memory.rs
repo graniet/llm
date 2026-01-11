@@ -5,17 +5,22 @@ use tokio::sync::{broadcast, RwLock};
 use super::{MemoryProvider, MemoryType, MessageEvent};
 use crate::{chat::ChatMessage, error::LLMError};
 
+const DEFAULT_REACTIVE_CAPACITY: usize = 1000;
+
 #[derive(Clone)]
 pub struct SharedMemory<T: MemoryProvider> {
     inner: Arc<RwLock<T>>,
     event_sender: Option<broadcast::Sender<MessageEvent>>,
+    memory_type: MemoryType,
 }
 
 impl<T: MemoryProvider> SharedMemory<T> {
     pub fn new(provider: T) -> Self {
+        let memory_type = provider.memory_type();
         Self {
             inner: Arc::new(RwLock::new(provider)),
             event_sender: None,
+            memory_type,
         }
     }
 
@@ -24,24 +29,23 @@ impl<T: MemoryProvider> SharedMemory<T> {
     /// The capacity determines how many message events can be queued before older
     /// ones get dropped for slow subscribers.
     pub fn new_reactive_with_capacity(provider: T, capacity: usize) -> Self {
+        let memory_type = provider.memory_type();
         let (sender, _) = broadcast::channel(capacity);
         Self {
             inner: Arc::new(RwLock::new(provider)),
             event_sender: Some(sender),
+            memory_type,
         }
     }
 
     /// Create a new reactive shared memory using the default capacity of **1000**.
     pub fn new_reactive(provider: T) -> Self {
-        Self::new_reactive_with_capacity(provider, 1000)
+        Self::new_reactive_with_capacity(provider, DEFAULT_REACTIVE_CAPACITY)
     }
 
     /// Subscribe to message events (only available for reactive memory)
-    pub fn subscribe(&self) -> broadcast::Receiver<MessageEvent> {
-        self.event_sender
-            .as_ref()
-            .expect("subscribe() called on non-reactive memory")
-            .subscribe()
+    pub fn subscribe(&self) -> Option<broadcast::Receiver<MessageEvent>> {
+        self.event_sender.as_ref().map(|sender| sender.subscribe())
     }
 }
 
@@ -67,11 +71,16 @@ impl<T: MemoryProvider> MemoryProvider for SharedMemory<T> {
     }
 
     fn memory_type(&self) -> MemoryType {
-        MemoryType::SlidingWindow
+        self.memory_type.clone()
     }
 
     fn size(&self) -> usize {
-        0
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let guard = self.inner.read().await;
+                guard.size()
+            })
+        })
     }
 
     fn needs_summary(&self) -> bool {

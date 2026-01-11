@@ -238,10 +238,12 @@ impl BedrockModel {
             return None;
         }
 
-        CrossRegionModel::from_vendor_and_id(info_parts[1], info_parts[2]).map(|cross_model| Self::CrossRegion {
+        CrossRegionModel::from_vendor_and_id(info_parts[1], info_parts[2]).map(|cross_model| {
+            Self::CrossRegion {
                 region: region.to_string(),
                 model: cross_model,
-            })
+            }
+        })
     }
 
     /// Check if this is a cross-region inference profile (ARN-based)
