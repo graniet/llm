@@ -1,0 +1,6 @@
+---
+source: src/bin/llm-cli/ui/messages/text.rs
+expression: text_to_plain(&rendered)
+---
+* Calling time_now call_1
+{"format":"iso"}
