@@ -368,7 +368,10 @@ impl BedrockBackend {
                     "embedding_types": ["float"],
                 })
             }
-            BedrockModel::CrossRegion { model: models::CrossRegionModel::CohereEmbedV4, .. } => {
+            BedrockModel::CrossRegion {
+                model: models::CrossRegionModel::CohereEmbedV4,
+                ..
+            } => {
                 json!({
                     "texts": [request.input],
                     "input_type": request.input_type.unwrap_or_else(|| "search_document".to_string()),
@@ -427,20 +430,21 @@ impl BedrockBackend {
                 .iter()
                 .filter_map(|v| v.as_f64())
                 .collect(),
-            BedrockModel::CrossRegion { model: models::CrossRegionModel::CohereEmbedV4, .. } =>
-            {
-                body.get("embeddings")
-                    .and_then(|e| e.get("float"))
-                    .and_then(|e| e.as_array())
-                    .and_then(|arr| arr.first())
-                    .and_then(|e| e.as_array())
-                    .ok_or_else(|| {
-                        BedrockError::InvalidResponse("No embeddings in response".to_string())
-                    })?
-                    .iter()
-                    .filter_map(|v| v.as_f64())
-                    .collect()
-            }
+            BedrockModel::CrossRegion {
+                model: models::CrossRegionModel::CohereEmbedV4,
+                ..
+            } => body
+                .get("embeddings")
+                .and_then(|e| e.get("float"))
+                .and_then(|e| e.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|e| e.as_array())
+                .ok_or_else(|| {
+                    BedrockError::InvalidResponse("No embeddings in response".to_string())
+                })?
+                .iter()
+                .filter_map(|v| v.as_f64())
+                .collect(),
             _ => vec![],
         };
 
@@ -547,11 +551,7 @@ impl BedrockBackend {
 
     // Helper methods
 
-
-    fn prepare_chat_request(
-        &self,
-        request: ChatRequest,
-    ) -> Result<PreparedChatRequest> {
+    fn prepare_chat_request(&self, request: ChatRequest) -> Result<PreparedChatRequest> {
         let default_model = self
             .model
             .clone()

@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use secrecy::{ExposeSecret, SecretString};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
@@ -11,10 +11,10 @@ const DEFAULT_PROVIDER_KEY: &str = "default";
 ///
 /// Provides functionality to store, retrieve, and manage secrets
 /// in a JSON file located in the user's home directory.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct SecretStore {
     /// Map of secret keys to their values
-    secrets: HashMap<String, String>,
+    secrets: HashMap<String, SecretString>,
     /// Path to the secrets file
     file_path: PathBuf,
 }
@@ -29,7 +29,9 @@ impl SecretStore {
     ///
     /// * `io::Result<Self>` - A new SecretStore instance or an IO error
     pub fn new() -> io::Result<Self> {
-        let home_dir = dirs::home_dir().expect("Could not find home directory");
+        let home_dir = dirs::home_dir().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, "Could not find home directory")
+        })?;
         let file_path = home_dir.join(".llm").join("secrets.json");
 
         if let Some(parent) = file_path.parent() {
@@ -55,7 +57,12 @@ impl SecretStore {
             Ok(mut file) => {
                 let mut contents = String::new();
                 file.read_to_string(&mut contents)?;
-                self.secrets = serde_json::from_str(&contents).unwrap_or_default();
+                let secrets: HashMap<String, String> = serde_json::from_str(&contents)
+                    .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
+                self.secrets = secrets
+                    .into_iter()
+                    .map(|(key, value)| (key, SecretString::new(value)))
+                    .collect();
                 Ok(())
             }
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -69,7 +76,12 @@ impl SecretStore {
     ///
     /// * `io::Result<()>` - Success or an IO error
     fn save(&self) -> io::Result<()> {
-        let contents = serde_json::to_string_pretty(&self.secrets)?;
+        let secrets: HashMap<String, String> = self
+            .secrets
+            .iter()
+            .map(|(key, value)| (key.clone(), value.expose_secret().clone()))
+            .collect();
+        let contents = serde_json::to_string_pretty(&secrets)?;
         let mut file = File::create(&self.file_path)?;
         file.write_all(contents.as_bytes())?;
         Ok(())
@@ -86,7 +98,8 @@ impl SecretStore {
     ///
     /// * `io::Result<()>` - Success or an IO error
     pub fn set(&mut self, key: &str, value: &str) -> io::Result<()> {
-        self.secrets.insert(key.to_string(), value.to_string());
+        self.secrets
+            .insert(key.to_string(), SecretString::new(value.to_string()));
         self.save()
     }
 
@@ -100,6 +113,11 @@ impl SecretStore {
     ///
     /// * `Option<&String>` - The secret value if found, or None
     pub fn get(&self, key: &str) -> Option<&String> {
+        self.secrets.get(key).map(|secret| secret.expose_secret())
+    }
+
+    /// Retrieves a secret value without exposing it as a String
+    pub fn get_secret(&self, key: &str) -> Option<&SecretString> {
         self.secrets.get(key)
     }
 
@@ -127,8 +145,10 @@ impl SecretStore {
     ///
     /// * `io::Result<()>` - Success or an IO error
     pub fn set_default_provider(&mut self, provider: &str) -> io::Result<()> {
-        self.secrets
-            .insert(DEFAULT_PROVIDER_KEY.to_string(), provider.to_string());
+        self.secrets.insert(
+            DEFAULT_PROVIDER_KEY.to_string(),
+            SecretString::new(provider.to_string()),
+        );
         self.save()
     }
 
@@ -138,7 +158,9 @@ impl SecretStore {
     ///
     /// * `Option<&String>` - The default provider if set, or None
     pub fn get_default_provider(&self) -> Option<&String> {
-        self.secrets.get(DEFAULT_PROVIDER_KEY)
+        self.secrets
+            .get(DEFAULT_PROVIDER_KEY)
+            .map(|secret| secret.expose_secret())
     }
 
     /// Deletes the default provider setting
