@@ -1,4 +1,5 @@
 use crate::{
+    builder::SystemPrompt,
     chat::{Tool, ToolChoice},
     error::LLMError,
     LLMProvider,
@@ -16,13 +17,16 @@ pub(super) fn build_anthropic(
     let api_key = helpers::require_api_key(state, "Anthropic")?;
     let timeout = helpers::timeout_or_default(state);
 
+    // Convert String to SystemPrompt for Anthropic (supports structured prompts)
+    let system_prompt = state.system.take().map(SystemPrompt::String);
+
     let provider = crate::backends::anthropic::Anthropic::new(
         api_key,
         state.model.take(),
         state.max_tokens,
         state.temperature,
         timeout,
-        state.system.take(),
+        system_prompt,
         state.top_p,
         state.top_k,
         tools,

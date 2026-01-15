@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::{
-    builder::LLMBackend,
+    builder::{LLMBackend, SystemContent, SystemPrompt},
     chat::{
         ChatMessage, ChatProvider, ChatResponse, ChatRole, MessageType, StreamChunk, Tool,
         ToolChoice, Usage,
@@ -44,7 +44,7 @@ pub struct AnthropicConfig {
     /// Request timeout in seconds.
     pub timeout_seconds: u64,
     /// System prompt to guide model behavior.
-    pub system: String,
+    pub system: SystemPrompt,
     /// Top-p (nucleus) sampling parameter.
     pub top_p: Option<f32>,
     /// Top-k sampling parameter.
@@ -91,6 +91,14 @@ struct ThinkingConfig {
     budget_tokens: u32,
 }
 
+/// System prompt in the request - can be either a string or vector of content objects
+#[derive(Serialize, Debug)]
+#[serde(untagged)]
+enum RequestSystemPrompt<'a> {
+    String(&'a str),
+    Messages(&'a [SystemContent]),
+}
+
 /// Request payload for Anthropic's messages API endpoint.
 #[derive(Serialize, Debug)]
 struct AnthropicCompleteRequest<'a> {
@@ -101,7 +109,7 @@ struct AnthropicCompleteRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    system: Option<&'a str>,
+    system: Option<RequestSystemPrompt<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -487,6 +495,14 @@ impl Anthropic {
         (anthropic_tools, final_tool_choice)
     }
 
+    /// Converts a SystemPrompt to the request format
+    fn system_to_request(system: &SystemPrompt) -> RequestSystemPrompt<'_> {
+        match system {
+            SystemPrompt::String(s) => RequestSystemPrompt::String(s),
+            SystemPrompt::Messages(msgs) => RequestSystemPrompt::Messages(msgs),
+        }
+    }
+
     /// Creates a new Anthropic client with the specified configuration.
     ///
     /// # Arguments
@@ -505,7 +521,7 @@ impl Anthropic {
         max_tokens: Option<u32>,
         temperature: Option<f32>,
         timeout_seconds: Option<u64>,
-        system: Option<String>,
+        system: Option<SystemPrompt>,
         top_p: Option<f32>,
         top_k: Option<u32>,
         tools: Option<Vec<Tool>>,
@@ -551,36 +567,6 @@ impl Anthropic {
     /// * `timeout_seconds` - Request timeout in seconds (defaults to 30)
     /// * `system` - System prompt (defaults to "You are a helpful assistant.")
     /// * `thinking_budget_tokens` - Budget tokens for thinking (optional)
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use reqwest::Client;
-    /// use std::time::Duration;
-    ///
-    /// // Create a shared client with custom settings
-    /// let shared_client = Client::builder()
-    ///     .timeout(Duration::from_secs(120))
-    ///     .build()
-    ///     .unwrap();
-    ///
-    /// // Use the shared client for multiple Anthropic instances
-    /// let anthropic = llm::backends::anthropic::Anthropic::with_client(
-    ///     shared_client.clone(),
-    ///     "your-api-key",
-    ///     Some("claude-3-opus-20240229".to_string()),
-    ///     Some(1000),
-    ///     Some(0.7),
-    ///     Some(120),
-    ///     Some("You are a helpful assistant.".to_string()),
-    ///     None,
-    ///     None,
-    ///     None,
-    ///     None,
-    ///     None,
-    ///     None,
-    /// );
-    /// ```
     #[allow(clippy::too_many_arguments)]
     pub fn with_client(
         client: Client,
@@ -589,7 +575,7 @@ impl Anthropic {
         max_tokens: Option<u32>,
         temperature: Option<f32>,
         timeout_seconds: Option<u64>,
-        system: Option<String>,
+        system: Option<SystemPrompt>,
         top_p: Option<f32>,
         top_k: Option<u32>,
         tools: Option<Vec<Tool>>,
@@ -603,7 +589,9 @@ impl Anthropic {
                 model: model.unwrap_or_else(|| "claude-3-sonnet-20240229".to_string()),
                 max_tokens: max_tokens.unwrap_or(300),
                 temperature: temperature.unwrap_or(0.7),
-                system: system.unwrap_or_else(|| "You are a helpful assistant.".to_string()),
+                system: system.unwrap_or_else(|| {
+                    SystemPrompt::String("You are a helpful assistant.".to_string())
+                }),
                 timeout_seconds: timeout_seconds.unwrap_or(30),
                 top_p,
                 top_k,
@@ -636,7 +624,7 @@ impl Anthropic {
         self.config.timeout_seconds
     }
 
-    pub fn system(&self) -> &str {
+    pub fn system(&self) -> &SystemPrompt {
         &self.config.system
     }
 
@@ -706,12 +694,14 @@ impl ChatProvider for Anthropic {
             None
         };
 
+        let system_prompt = Self::system_to_request(&self.config.system);
+
         let req_body = AnthropicCompleteRequest {
             messages: anthropic_messages,
             model: &self.config.model,
             max_tokens: Some(self.config.max_tokens),
             temperature: Some(self.config.temperature),
-            system: Some(&self.config.system),
+            system: Some(system_prompt),
             stream: Some(false),
             top_p: self.config.top_p,
             top_k: self.config.top_k,
@@ -833,12 +823,14 @@ impl ChatProvider for Anthropic {
             })
             .collect();
 
+        let system_prompt = Self::system_to_request(&self.config.system);
+
         let req_body = AnthropicCompleteRequest {
             messages: anthropic_messages,
             model: &self.config.model,
             max_tokens: Some(self.config.max_tokens),
             temperature: Some(self.config.temperature),
-            system: Some(&self.config.system),
+            system: Some(system_prompt),
             stream: Some(true),
             top_p: self.config.top_p,
             top_k: self.config.top_k,
@@ -901,12 +893,14 @@ impl ChatProvider for Anthropic {
             &self.config.tool_choice,
         );
 
+        let system_prompt = Self::system_to_request(&self.config.system);
+
         let req_body = AnthropicCompleteRequest {
             messages: anthropic_messages,
             model: &self.config.model,
             max_tokens: Some(self.config.max_tokens),
             temperature: Some(self.config.temperature),
-            system: Some(&self.config.system),
+            system: Some(system_prompt),
             stream: Some(true),
             top_p: self.config.top_p,
             top_k: self.config.top_k,
