@@ -40,6 +40,8 @@
 //! }
 //! ```
 
+use std::sync::Arc;
+
 use crate::{
     builder::LLMBackend,
     chat::{
@@ -62,33 +64,44 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Configuration for the Google Gemini client.
+#[derive(Debug)]
+pub struct GoogleConfig {
+    /// API key for authentication with Google.
+    pub api_key: String,
+    /// Model identifier (e.g., "gemini-pro").
+    pub model: String,
+    /// Maximum tokens to generate in responses.
+    pub max_tokens: Option<u32>,
+    /// Sampling temperature for response randomness.
+    pub temperature: Option<f32>,
+    /// System prompt to guide model behavior.
+    pub system: Option<String>,
+    /// Request timeout in seconds.
+    pub timeout_seconds: Option<u64>,
+    /// Top-p (nucleus) sampling parameter.
+    pub top_p: Option<f32>,
+    /// Top-k sampling parameter.
+    pub top_k: Option<u32>,
+    /// JSON schema for structured output.
+    pub json_schema: Option<StructuredOutputFormat>,
+    /// Available tools for the model to use.
+    pub tools: Option<Vec<Tool>>,
+}
+
 /// Client for interacting with Google's Gemini API.
 ///
 /// This struct holds the configuration and state needed to make requests to the Gemini API.
 /// It implements the [`ChatProvider`], [`CompletionProvider`], and [`EmbeddingProvider`] traits.
+///
+/// The client uses `Arc` internally for configuration, making cloning cheap
+/// (only an atomic reference count increment).
+#[derive(Debug, Clone)]
 pub struct Google {
-    /// API key for authentication with Google's API
-    pub api_key: String,
-    /// Model identifier (e.g. "gemini-1.5-flash")
-    pub model: String,
-    /// Maximum number of tokens to generate in responses
-    pub max_tokens: Option<u32>,
-    /// Sampling temperature between 0.0 and 1.0
-    pub temperature: Option<f32>,
-    /// Optional system prompt to set context
-    pub system: Option<String>,
-    /// Request timeout in seconds
-    pub timeout_seconds: Option<u64>,
-    /// Top-p sampling parameter
-    pub top_p: Option<f32>,
-    /// Top-k sampling parameter
-    pub top_k: Option<u32>,
-    /// JSON schema for structured output
-    pub json_schema: Option<StructuredOutputFormat>,
-    /// Available tools for function calling
-    pub tools: Option<Vec<Tool>>,
-    /// HTTP client for making API requests
-    client: Client,
+    /// Shared configuration wrapped in Arc for cheap cloning.
+    pub config: Arc<GoogleConfig>,
+    /// HTTP client for making requests.
+    pub client: Client,
 }
 
 /// Request body for chat completions
@@ -474,7 +487,6 @@ impl Google {
     /// * `temperature` - Sampling temperature between 0.0 and 1.0
     /// * `timeout_seconds` - Request timeout in seconds
     /// * `system` - System prompt to set context
-    /// * `stream` - Whether to stream responses
     /// * `top_p` - Top-p sampling parameter
     /// * `top_k` - Top-k sampling parameter
     /// * `json_schema` - JSON schema for structured output
@@ -500,19 +512,95 @@ impl Google {
         if let Some(sec) = timeout_seconds {
             builder = builder.timeout(std::time::Duration::from_secs(sec));
         }
-        Self {
-            api_key: api_key.into(),
-            model: model.unwrap_or_else(|| "gemini-1.5-flash".to_string()),
+        Self::with_client(
+            builder.build().expect("Failed to build reqwest Client"),
+            api_key,
+            model,
             max_tokens,
             temperature,
-            system,
             timeout_seconds,
+            system,
             top_p,
             top_k,
             json_schema,
             tools,
-            client: builder.build().expect("Failed to build reqwest Client"),
+        )
+    }
+
+    /// Creates a new Google Gemini client with a custom HTTP client.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_client(
+        client: Client,
+        api_key: impl Into<String>,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<String>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+        json_schema: Option<StructuredOutputFormat>,
+        tools: Option<Vec<Tool>>,
+    ) -> Self {
+        Self {
+            config: Arc::new(GoogleConfig {
+                api_key: api_key.into(),
+                model: model.unwrap_or_else(|| "gemini-1.5-flash".to_string()),
+                max_tokens,
+                temperature,
+                system,
+                timeout_seconds,
+                top_p,
+                top_k,
+                json_schema,
+                tools,
+            }),
+            client,
         }
+    }
+
+    pub fn api_key(&self) -> &str {
+        &self.config.api_key
+    }
+
+    pub fn model(&self) -> &str {
+        &self.config.model
+    }
+
+    pub fn max_tokens(&self) -> Option<u32> {
+        self.config.max_tokens
+    }
+
+    pub fn temperature(&self) -> Option<f32> {
+        self.config.temperature
+    }
+
+    pub fn timeout_seconds(&self) -> Option<u64> {
+        self.config.timeout_seconds
+    }
+
+    pub fn system(&self) -> Option<&str> {
+        self.config.system.as_deref()
+    }
+
+    pub fn top_p(&self) -> Option<f32> {
+        self.config.top_p
+    }
+
+    pub fn top_k(&self) -> Option<u32> {
+        self.config.top_k
+    }
+
+    pub fn json_schema(&self) -> Option<&StructuredOutputFormat> {
+        self.config.json_schema.as_ref()
+    }
+
+    pub fn tools(&self) -> Option<&[Tool]> {
+        self.config.tools.as_deref()
+    }
+
+    pub fn client(&self) -> &Client {
+        &self.client
     }
 }
 
@@ -528,14 +616,14 @@ impl ChatProvider for Google {
     ///
     /// The model's response text or an error
     async fn chat(&self, messages: &[ChatMessage]) -> Result<Box<dyn ChatResponse>, LLMError> {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Google API key".to_string()));
         }
 
         let mut chat_contents = Vec::with_capacity(messages.len());
 
         // Add system message if present
-        if let Some(system) = &self.system {
+        if let Some(system) = &self.config.system {
             chat_contents.push(GoogleChatContent {
                 role: "user",
                 parts: vec![GoogleContentPart::Text(system)],
@@ -601,36 +689,36 @@ impl ChatProvider for Google {
         }
 
         // Remove generation_config if empty to avoid validation errors
-        let generation_config = if self.max_tokens.is_none()
-            && self.temperature.is_none()
-            && self.top_p.is_none()
-            && self.top_k.is_none()
-            && self.json_schema.is_none()
+        let generation_config = if self.config.max_tokens.is_none()
+            && self.config.temperature.is_none()
+            && self.config.top_p.is_none()
+            && self.config.top_k.is_none()
+            && self.config.json_schema.is_none()
         {
             None
         } else {
             // If json_schema and json_schema.schema are not None, use json_schema.schema as the response schema and set response_mime_type to JSON
             // Google's API doesn't need the schema to have a "name" field, so we can just use the schema directly.
-            let (response_mime_type, response_schema) = if let Some(json_schema) = &self.json_schema
-            {
-                if let Some(schema) = &json_schema.schema {
-                    // If the schema has an "additionalProperties" field (as required by OpenAI), remove it as Google's API doesn't support it
-                    let mut schema = schema.clone();
-                    if let Some(obj) = schema.as_object_mut() {
-                        obj.remove("additionalProperties");
+            let (response_mime_type, response_schema) =
+                if let Some(json_schema) = &self.config.json_schema {
+                    if let Some(schema) = &json_schema.schema {
+                        // If the schema has an "additionalProperties" field (as required by OpenAI), remove it as Google's API doesn't support it
+                        let mut schema = schema.clone();
+                        if let Some(obj) = schema.as_object_mut() {
+                            obj.remove("additionalProperties");
+                        }
+                        (Some(GoogleResponseMimeType::Json), Some(schema))
+                    } else {
+                        (None, None)
                     }
-                    (Some(GoogleResponseMimeType::Json), Some(schema))
                 } else {
                     (None, None)
-                }
-            } else {
-                (None, None)
-            };
+                };
             Some(GoogleGenerationConfig {
-                max_output_tokens: self.max_tokens,
-                temperature: self.temperature,
-                top_p: self.top_p,
-                top_k: self.top_k,
+                max_output_tokens: self.config.max_tokens,
+                temperature: self.config.temperature,
+                top_p: self.config.top_p,
+                top_k: self.config.top_k,
                 response_mime_type,
                 response_schema,
             })
@@ -649,12 +737,12 @@ impl ChatProvider for Google {
 
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
-            model = self.model,
-            key = self.api_key
+            model = self.config.model,
+            key = self.config.api_key
         );
 
         let mut request = self.client.post(&url).json(&req_body);
-        if let Some(timeout) = self.timeout_seconds {
+        if let Some(timeout) = self.config.timeout_seconds {
             request = request.timeout(std::time::Duration::from_secs(timeout));
         }
 
@@ -696,14 +784,14 @@ impl ChatProvider for Google {
         messages: &[ChatMessage],
         tools: Option<&[Tool]>,
     ) -> Result<Box<dyn ChatResponse>, LLMError> {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Google API key".to_string()));
         }
 
         let mut chat_contents = Vec::with_capacity(messages.len());
 
         // Add system message if present
-        if let Some(system) = &self.system {
+        if let Some(system) = &self.config.system {
             chat_contents.push(GoogleChatContent {
                 role: "user",
                 parts: vec![GoogleContentPart::Text(system)],
@@ -779,29 +867,29 @@ impl ChatProvider for Google {
         let generation_config = {
             // If json_schema and json_schema.schema are not None, use json_schema.schema as the response schema and set response_mime_type to JSON
             // Google's API doesn't need the schema to have a "name" field, so we can just use the schema directly.
-            let (response_mime_type, response_schema) = if let Some(json_schema) = &self.json_schema
-            {
-                if let Some(schema) = &json_schema.schema {
-                    // If the schema has an "additionalProperties" field (as required by OpenAI), remove it as Google's API doesn't support it
-                    let mut schema = schema.clone();
+            let (response_mime_type, response_schema) =
+                if let Some(json_schema) = &self.config.json_schema {
+                    if let Some(schema) = &json_schema.schema {
+                        // If the schema has an "additionalProperties" field (as required by OpenAI), remove it as Google's API doesn't support it
+                        let mut schema = schema.clone();
 
-                    if let Some(obj) = schema.as_object_mut() {
-                        obj.remove("additionalProperties");
+                        if let Some(obj) = schema.as_object_mut() {
+                            obj.remove("additionalProperties");
+                        }
+
+                        (Some(GoogleResponseMimeType::Json), Some(schema))
+                    } else {
+                        (None, None)
                     }
-
-                    (Some(GoogleResponseMimeType::Json), Some(schema))
                 } else {
                     (None, None)
-                }
-            } else {
-                (None, None)
-            };
+                };
 
             Some(GoogleGenerationConfig {
-                max_output_tokens: self.max_tokens,
-                temperature: self.temperature,
-                top_p: self.top_p,
-                top_k: self.top_k,
+                max_output_tokens: self.config.max_tokens,
+                temperature: self.config.temperature,
+                top_p: self.config.top_p,
+                top_k: self.config.top_k,
                 response_mime_type,
                 response_schema,
             })
@@ -821,14 +909,14 @@ impl ChatProvider for Google {
 
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
-            model = self.model,
-            key = self.api_key
+            model = self.config.model,
+            key = self.config.api_key
 
         );
 
         let mut request = self.client.post(&url).json(&req_body);
 
-        if let Some(timeout) = self.timeout_seconds {
+        if let Some(timeout) = self.config.timeout_seconds {
             request = request.timeout(std::time::Duration::from_secs(timeout));
         }
 
@@ -906,11 +994,11 @@ impl ChatProvider for Google {
         std::pin::Pin<Box<dyn Stream<Item = Result<crate::chat::StreamResponse, LLMError>> + Send>>,
         LLMError,
     > {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Google API key".to_string()));
         }
         let mut chat_contents = Vec::with_capacity(messages.len());
-        if let Some(system) = &self.system {
+        if let Some(system) = &self.config.system {
             chat_contents.push(GoogleChatContent {
                 role: "user",
                 parts: vec![GoogleContentPart::Text(system)],
@@ -941,18 +1029,18 @@ impl ChatProvider for Google {
                 },
             });
         }
-        let generation_config = if self.max_tokens.is_none()
-            && self.temperature.is_none()
-            && self.top_p.is_none()
-            && self.top_k.is_none()
+        let generation_config = if self.config.max_tokens.is_none()
+            && self.config.temperature.is_none()
+            && self.config.top_p.is_none()
+            && self.config.top_k.is_none()
         {
             None
         } else {
             Some(GoogleGenerationConfig {
-                max_output_tokens: self.max_tokens,
-                temperature: self.temperature,
-                top_p: self.top_p,
-                top_k: self.top_k,
+                max_output_tokens: self.config.max_tokens,
+                temperature: self.config.temperature,
+                top_p: self.config.top_p,
+                top_k: self.config.top_k,
                 response_mime_type: None,
                 response_schema: None,
             })
@@ -965,12 +1053,12 @@ impl ChatProvider for Google {
         };
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse&key={key}",
-            model = self.model,
-            key = self.api_key
+            model = self.config.model,
+            key = self.config.api_key
         );
 
         let mut request = self.client.post(&url).json(&req_body);
-        if let Some(timeout) = self.timeout_seconds {
+        if let Some(timeout) = self.config.timeout_seconds {
             request = request.timeout(std::time::Duration::from_secs(timeout));
         }
         let response = request.send().await?;
@@ -1012,7 +1100,7 @@ impl CompletionProvider for Google {
 #[async_trait]
 impl EmbeddingProvider for Google {
     async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>, LLMError> {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Google API key".to_string()));
         }
 
@@ -1029,7 +1117,7 @@ impl EmbeddingProvider for Google {
 
             let url = format!(
                 "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={}",
-                self.api_key
+                self.config.api_key
             );
 
             let resp = self
@@ -1058,7 +1146,7 @@ impl SpeechToTextProvider for Google {
 
 impl LLMProvider for Google {
     fn tools(&self) -> Option<&[Tool]> {
-        self.tools.as_deref()
+        self.config.tools.as_deref()
     }
 }
 
@@ -1222,13 +1310,13 @@ impl ModelsProvider for Google {
         &self,
         _request: Option<&ModelListRequest>,
     ) -> Result<Box<dyn ModelListResponse>, LLMError> {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Google API key".to_string()));
         }
 
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models?key={}",
-            self.api_key
+            self.config.api_key
         );
 
         let resp = self.client.get(&url).send().await?.error_for_status()?;

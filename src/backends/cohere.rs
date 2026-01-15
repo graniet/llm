@@ -48,6 +48,7 @@ impl Cohere {
         top_k: Option<u32>,
         tools: Option<Vec<Tool>>,
         tool_choice: Option<ToolChoice>,
+        extra_body: Option<serde_json::Value>,
         embedding_encoding_format: Option<String>,
         embedding_dimensions: Option<u32>,
         reasoning_effort: Option<String>,
@@ -70,6 +71,7 @@ impl Cohere {
             reasoning_effort,
             json_schema,
             None, // voice - not supported by Cohere
+            extra_body,
             parallel_tool_calls,
             normalize_response,
             embedding_encoding_format,
@@ -102,7 +104,7 @@ struct CohereEmbeddingResponse {
 
 impl LLMProvider for Cohere {
     fn tools(&self) -> Option<&[Tool]> {
-        self.tools.as_deref()
+        self.config.tools.as_deref()
     }
 }
 
@@ -134,18 +136,23 @@ impl SpeechToTextProvider for Cohere {
 #[async_trait]
 impl EmbeddingProvider for Cohere {
     async fn embed(&self, input: Vec<String>) -> Result<Vec<Vec<f32>>, LLMError> {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Cohere API key".into()));
         }
 
         let body = CohereEmbeddingRequest {
-            model: self.model.clone(),
+            model: self.config.model.to_owned(),
             input,
-            encoding_format: self.embedding_encoding_format.clone(),
-            dimensions: self.embedding_dimensions,
+            encoding_format: self
+                .config
+                .embedding_encoding_format
+                .as_deref()
+                .map(|s| s.to_owned()),
+            dimensions: self.config.embedding_dimensions,
         };
 
         let url = self
+            .config
             .base_url
             .join("embeddings")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
@@ -153,7 +160,7 @@ impl EmbeddingProvider for Cohere {
         let resp = self
             .client
             .post(url)
-            .bearer_auth(&self.api_key)
+            .bearer_auth(&self.config.api_key)
             .json(&body)
             .send()
             .await?

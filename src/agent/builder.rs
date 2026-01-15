@@ -3,7 +3,7 @@
 use crate::{
     builder::LLMBuilder,
     error::LLMError,
-    memory::{ChatWithMemory, MemoryProvider, MessageCondition},
+    memory::{ChatWithMemory, ChatWithMemoryConfig, MemoryProvider, MessageCondition},
     LLMProvider,
 };
 use std::sync::Arc;
@@ -119,13 +119,15 @@ impl AgentBuilder {
         if let Some(memory) = self.memory {
             let memory_arc = Arc::new(RwLock::new(memory));
             let provider_arc = Arc::from(base_provider);
-            let agent_provider = ChatWithMemory::new(
-                provider_arc,
-                memory_arc,
-                self.role,
-                self.role_triggers,
-                self.max_cycles,
-            );
+            let mut config = ChatWithMemoryConfig::new(provider_arc, memory_arc)
+                .role_triggers(self.role_triggers);
+            if let Some(role) = self.role {
+                config = config.role(role);
+            }
+            if let Some(max) = self.max_cycles {
+                config = config.max_cycles(max);
+            }
+            let agent_provider = ChatWithMemory::with_config(config);
             Ok(Box::new(agent_provider))
         } else {
             // No memory, return base provider

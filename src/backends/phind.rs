@@ -1,5 +1,7 @@
 /// Implementation of the Phind LLM provider.
 /// This module provides integration with Phind's language model API.
+use std::sync::Arc;
+
 #[cfg(feature = "phind")]
 use crate::{
     chat::{ChatMessage, ChatProvider, ChatRole},
@@ -21,26 +23,36 @@ use reqwest::StatusCode;
 use reqwest::{Client, Response};
 use serde_json::{json, Value};
 
-/// Represents a Phind LLM client with configuration options.
-pub struct Phind {
-    /// The model identifier to use (e.g. "Phind-70B")
+/// Configuration for the Phind client.
+#[derive(Debug)]
+pub struct PhindConfig {
+    /// Model identifier.
     pub model: String,
-    /// Maximum number of tokens to generate
+    /// Maximum tokens to generate in responses.
     pub max_tokens: Option<u32>,
-    /// Temperature for controlling randomness (0.0-1.0)
+    /// Sampling temperature for response randomness.
     pub temperature: Option<f32>,
-    /// System prompt to prepend to conversations
+    /// System prompt to guide model behavior.
     pub system: Option<String>,
-    /// Request timeout in seconds
+    /// Request timeout in seconds.
     pub timeout_seconds: Option<u64>,
-    /// Top-p sampling parameter
+    /// Top-p (nucleus) sampling parameter.
     pub top_p: Option<f32>,
-    /// Top-k sampling parameter
+    /// Top-k sampling parameter.
     pub top_k: Option<u32>,
-    /// Base URL for the Phind API
+    /// Base URL for API requests.
     pub api_base_url: String,
-    /// HTTP client for making requests
-    client: Client,
+}
+
+/// Represents a Phind LLM client with configuration options.
+///
+/// The client uses `Arc` internally for configuration, making cloning cheap.
+#[derive(Debug, Clone)]
+pub struct Phind {
+    /// Shared configuration wrapped in Arc for cheap cloning.
+    pub config: Arc<PhindConfig>,
+    /// HTTP client for making requests.
+    pub client: Client,
 }
 
 #[derive(Debug)]
@@ -80,17 +92,79 @@ impl Phind {
         if let Some(sec) = timeout_seconds {
             builder = builder.timeout(std::time::Duration::from_secs(sec));
         }
-        Self {
-            model: model.unwrap_or_else(|| "Phind-70B".to_string()),
+        Self::with_client(
+            builder.build().expect("Failed to build reqwest Client"),
+            model,
             max_tokens,
             temperature,
-            system,
             timeout_seconds,
+            system,
             top_p,
             top_k,
-            api_base_url: "https://https.extension.phind.com/agent/".to_string(),
-            client: builder.build().expect("Failed to build reqwest Client"),
+        )
+    }
+
+    /// Creates a new Phind client with a custom HTTP client.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_client(
+        client: Client,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<String>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+    ) -> Self {
+        Self {
+            config: Arc::new(PhindConfig {
+                model: model.unwrap_or_else(|| "Phind-70B".to_string()),
+                max_tokens,
+                temperature,
+                system,
+                timeout_seconds,
+                top_p,
+                top_k,
+                api_base_url: "https://https.extension.phind.com/agent/".to_string(),
+            }),
+            client,
         }
+    }
+
+    pub fn model(&self) -> &str {
+        &self.config.model
+    }
+
+    pub fn max_tokens(&self) -> Option<u32> {
+        self.config.max_tokens
+    }
+
+    pub fn temperature(&self) -> Option<f32> {
+        self.config.temperature
+    }
+
+    pub fn timeout_seconds(&self) -> Option<u64> {
+        self.config.timeout_seconds
+    }
+
+    pub fn system(&self) -> Option<&str> {
+        self.config.system.as_deref()
+    }
+
+    pub fn top_p(&self) -> Option<f32> {
+        self.config.top_p
+    }
+
+    pub fn top_k(&self) -> Option<u32> {
+        self.config.top_k
+    }
+
+    pub fn api_base_url(&self) -> &str {
+        &self.config.api_base_url
+    }
+
+    pub fn client(&self) -> &Client {
+        &self.client
     }
 
     /// Creates the required headers for API requests.
@@ -189,7 +263,7 @@ impl ChatProvider for Phind {
             }));
         }
 
-        if let Some(system_prompt) = &self.system {
+        if let Some(system_prompt) = &self.config.system {
             message_history.insert(
                 0,
                 json!({
@@ -204,7 +278,7 @@ impl ChatProvider for Phind {
             "allow_magic_buttons": true,
             "is_vscode_extension": true,
             "message_history": message_history,
-            "requested_model": self.model,
+            "requested_model": self.config.model,
             "user_input": messages
                 .iter()
                 .rev()
@@ -220,11 +294,11 @@ impl ChatProvider for Phind {
         let headers = Self::create_headers()?;
         let mut request = self
             .client
-            .post(&self.api_base_url)
+            .post(&self.config.api_base_url)
             .headers(headers)
             .json(&payload);
 
-        if let Some(timeout) = self.timeout_seconds {
+        if let Some(timeout) = self.config.timeout_seconds {
             request = request.timeout(std::time::Duration::from_secs(timeout));
         }
 

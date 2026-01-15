@@ -3,6 +3,8 @@
 //! This module provides integration with X.AI's models through their API.
 //! It implements chat and completion capabilities using the X.AI API endpoints.
 
+use std::sync::Arc;
+
 use crate::ToolCall;
 #[cfg(feature = "xai")]
 use crate::{
@@ -23,47 +25,58 @@ use futures::stream::Stream;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+/// Configuration for the XAI client.
+/// Configuration for the X.AI client.
+#[derive(Debug)]
+pub struct XAIConfig {
+    /// API key for authentication with X.AI.
+    pub api_key: String,
+    /// Model identifier.
+    pub model: String,
+    /// Maximum tokens to generate in responses.
+    pub max_tokens: Option<u32>,
+    /// Sampling temperature for response randomness.
+    pub temperature: Option<f32>,
+    /// System prompt to guide model behavior.
+    pub system: Option<String>,
+    /// Request timeout in seconds.
+    pub timeout_seconds: Option<u64>,
+    /// Top-p (nucleus) sampling parameter.
+    pub top_p: Option<f32>,
+    /// Top-k sampling parameter.
+    pub top_k: Option<u32>,
+    /// Encoding format for embeddings.
+    pub embedding_encoding_format: Option<String>,
+    /// Dimensions for embeddings.
+    pub embedding_dimensions: Option<u32>,
+    /// JSON schema for structured output.
+    pub json_schema: Option<StructuredOutputFormat>,
+    /// Search mode for web search functionality.
+    pub xai_search_mode: Option<String>,
+    /// Source type for search.
+    pub xai_search_source_type: Option<String>,
+    /// Websites to exclude from search.
+    pub xai_search_excluded_websites: Option<Vec<String>>,
+    /// Maximum number of search results.
+    pub xai_search_max_results: Option<u32>,
+    /// Start date for search results.
+    pub xai_search_from_date: Option<String>,
+    /// End date for search results.
+    pub xai_search_to_date: Option<String>,
+}
+
 /// Client for interacting with X.AI's API.
 ///
 /// This struct provides methods for making chat and completion requests to X.AI's language models.
 /// It handles authentication, request configuration, and response parsing.
+///
+/// The client uses `Arc` internally for configuration, making cloning cheap.
+#[derive(Debug, Clone)]
 pub struct XAI {
-    /// API key for authentication with X.AI services
-    pub api_key: String,
-    /// Model identifier to use for requests (e.g. "grok-2-latest")
-    pub model: String,
-    /// Maximum number of tokens to generate in responses
-    pub max_tokens: Option<u32>,
-    /// Temperature parameter for controlling response randomness (0.0 to 1.0)
-    pub temperature: Option<f32>,
-    /// Optional system prompt to provide context
-    pub system: Option<String>,
-    /// Request timeout duration in seconds
-    pub timeout_seconds: Option<u64>,
-    /// Top-p sampling parameter for controlling response diversity
-    pub top_p: Option<f32>,
-    /// Top-k sampling parameter for controlling response diversity
-    pub top_k: Option<u32>,
-    /// Embedding encoding format
-    pub embedding_encoding_format: Option<String>,
-    /// Embedding dimensions
-    pub embedding_dimensions: Option<u32>,
-    /// JSON schema for structured output
-    pub json_schema: Option<StructuredOutputFormat>,
-    /// XAI search parameters
-    pub xai_search_mode: Option<String>,
-    /// XAI search sources
-    pub xai_search_source_type: Option<String>,
-    /// XAI search excluded websites
-    pub xai_search_excluded_websites: Option<Vec<String>>,
-    /// XAI search max results
-    pub xai_search_max_results: Option<u32>,
-    /// XAI search from date
-    pub xai_search_from_date: Option<String>,
-    /// XAI search to date
-    pub xai_search_to_date: Option<String>,
-    /// HTTP client for making API requests
-    client: Client,
+    /// Shared configuration wrapped in Arc for cheap cloning.
+    pub config: Arc<XAIConfig>,
+    /// HTTP client for making requests.
+    pub client: Client,
 }
 
 /// Search source configuration for search parameters
@@ -236,24 +249,6 @@ struct XAIResponseFormat {
 
 impl XAI {
     /// Creates a new X.AI client with the specified configuration.
-    ///
-    /// # Arguments
-    ///
-    /// * `api_key` - Authentication key for X.AI API access
-    /// * `model` - Model identifier (defaults to "grok-2-latest" if None)
-    /// * `max_tokens` - Maximum number of tokens to generate in responses
-    /// * `temperature` - Sampling temperature for controlling randomness
-    /// * `timeout_seconds` - Request timeout duration in seconds
-    /// * `system` - System prompt for providing context
-    /// * `stream` - Whether to enable streaming responses
-    /// * `top_p` - Top-p sampling parameter
-    /// * `top_k` - Top-k sampling parameter
-    /// * `json_schema` - JSON schema for structured output
-    /// * `search_parameters` - Search parameters for search functionality
-    ///
-    /// # Returns
-    ///
-    /// A configured X.AI client instance ready to make API requests.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         api_key: impl Into<String>,
@@ -278,13 +273,14 @@ impl XAI {
         if let Some(sec) = timeout_seconds {
             builder = builder.timeout(std::time::Duration::from_secs(sec));
         }
-        Self {
-            api_key: api_key.into(),
-            model: model.unwrap_or("grok-2-latest".to_string()),
+        Self::with_client(
+            builder.build().expect("Failed to build reqwest Client"),
+            api_key,
+            model,
             max_tokens,
             temperature,
-            system,
             timeout_seconds,
+            system,
             top_p,
             top_k,
             embedding_encoding_format,
@@ -296,8 +292,101 @@ impl XAI {
             xai_search_max_results,
             xai_search_from_date,
             xai_search_to_date,
-            client: builder.build().expect("Failed to build reqwest Client"),
+        )
+    }
+
+    /// Creates a new X.AI client with a custom HTTP client.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_client(
+        client: Client,
+        api_key: impl Into<String>,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<String>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+        embedding_encoding_format: Option<String>,
+        embedding_dimensions: Option<u32>,
+        json_schema: Option<StructuredOutputFormat>,
+        xai_search_mode: Option<String>,
+        xai_search_source_type: Option<String>,
+        xai_search_excluded_websites: Option<Vec<String>>,
+        xai_search_max_results: Option<u32>,
+        xai_search_from_date: Option<String>,
+        xai_search_to_date: Option<String>,
+    ) -> Self {
+        Self {
+            config: Arc::new(XAIConfig {
+                api_key: api_key.into(),
+                model: model.unwrap_or("grok-2-latest".to_string()),
+                max_tokens,
+                temperature,
+                system,
+                timeout_seconds,
+                top_p,
+                top_k,
+                embedding_encoding_format,
+                embedding_dimensions,
+                json_schema,
+                xai_search_mode,
+                xai_search_source_type,
+                xai_search_excluded_websites,
+                xai_search_max_results,
+                xai_search_from_date,
+                xai_search_to_date,
+            }),
+            client,
         }
+    }
+
+    pub fn api_key(&self) -> &str {
+        &self.config.api_key
+    }
+
+    pub fn model(&self) -> &str {
+        &self.config.model
+    }
+
+    pub fn max_tokens(&self) -> Option<u32> {
+        self.config.max_tokens
+    }
+
+    pub fn temperature(&self) -> Option<f32> {
+        self.config.temperature
+    }
+
+    pub fn timeout_seconds(&self) -> Option<u64> {
+        self.config.timeout_seconds
+    }
+
+    pub fn system(&self) -> Option<&str> {
+        self.config.system.as_deref()
+    }
+
+    pub fn top_p(&self) -> Option<f32> {
+        self.config.top_p
+    }
+
+    pub fn top_k(&self) -> Option<u32> {
+        self.config.top_k
+    }
+
+    pub fn embedding_encoding_format(&self) -> Option<&str> {
+        self.config.embedding_encoding_format.as_deref()
+    }
+
+    pub fn embedding_dimensions(&self) -> Option<u32> {
+        self.config.embedding_dimensions
+    }
+
+    pub fn json_schema(&self) -> Option<&StructuredOutputFormat> {
+        self.config.json_schema.as_ref()
+    }
+
+    pub fn client(&self) -> &Client {
+        &self.client
     }
 }
 
@@ -313,7 +402,7 @@ impl ChatProvider for XAI {
     ///
     /// The generated response text, or an error if the request fails.
     async fn chat(&self, messages: &[ChatMessage]) -> Result<Box<dyn ChatResponse>, LLMError> {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing X.AI API key".to_string()));
         }
 
@@ -328,7 +417,7 @@ impl ChatProvider for XAI {
             })
             .collect();
 
-        if let Some(system) = &self.system {
+        if let Some(system) = &self.config.system {
             xai_msgs.insert(
                 0,
                 XAIChatMessage {
@@ -342,33 +431,34 @@ impl ChatProvider for XAI {
         // There's currently no check for these, so we'll leave it up to the user to provide a valid schema.
         // Unknown if XAI requires these too, but since it copies everything else from OpenAI, it's likely.
         let response_format: Option<XAIResponseFormat> =
-            self.json_schema.as_ref().map(|s| XAIResponseFormat {
+            self.config.json_schema.as_ref().map(|s| XAIResponseFormat {
                 response_type: XAIResponseType::JsonSchema,
                 json_schema: Some(s.clone()),
             });
 
         let search_parameters = XaiSearchParameters {
-            mode: self.xai_search_mode.clone(),
+            mode: self.config.xai_search_mode.clone(),
             sources: Some(vec![XaiSearchSource {
                 source_type: self
+                    .config
                     .xai_search_source_type
                     .clone()
                     .unwrap_or("web".to_string()),
-                excluded_websites: self.xai_search_excluded_websites.clone(),
+                excluded_websites: self.config.xai_search_excluded_websites.clone(),
             }]),
-            max_search_results: self.xai_search_max_results,
-            from_date: self.xai_search_from_date.clone(),
-            to_date: self.xai_search_to_date.clone(),
+            max_search_results: self.config.xai_search_max_results,
+            from_date: self.config.xai_search_from_date.clone(),
+            to_date: self.config.xai_search_to_date.clone(),
         };
 
         let body = XAIChatRequest {
-            model: &self.model,
+            model: &self.config.model,
             messages: xai_msgs,
-            max_tokens: self.max_tokens,
-            temperature: self.temperature,
+            max_tokens: self.config.max_tokens,
+            temperature: self.config.temperature,
             stream: false,
-            top_p: self.top_p,
-            top_k: self.top_k,
+            top_p: self.config.top_p,
+            top_k: self.config.top_k,
             response_format,
             search_parameters: Some(&search_parameters),
         };
@@ -382,10 +472,10 @@ impl ChatProvider for XAI {
         let mut request = self
             .client
             .post("https://api.x.ai/v1/chat/completions")
-            .bearer_auth(&self.api_key)
+            .bearer_auth(&self.config.api_key)
             .json(&body);
 
-        if let Some(timeout) = self.timeout_seconds {
+        if let Some(timeout) = self.config.timeout_seconds {
             request = request.timeout(std::time::Duration::from_secs(timeout));
         }
 
@@ -432,7 +522,7 @@ impl ChatProvider for XAI {
         messages: &[ChatMessage],
     ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send>>, LLMError>
     {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing X.AI API key".to_string()));
         }
 
@@ -447,7 +537,7 @@ impl ChatProvider for XAI {
             })
             .collect();
 
-        if let Some(system) = &self.system {
+        if let Some(system) = &self.config.system {
             xai_msgs.insert(
                 0,
                 XAIChatMessage {
@@ -458,13 +548,13 @@ impl ChatProvider for XAI {
         }
 
         let body = XAIChatRequest {
-            model: &self.model,
+            model: &self.config.model,
             messages: xai_msgs,
-            max_tokens: self.max_tokens,
-            temperature: self.temperature,
+            max_tokens: self.config.max_tokens,
+            temperature: self.config.temperature,
             stream: true,
-            top_p: self.top_p,
-            top_k: self.top_k,
+            top_p: self.config.top_p,
+            top_k: self.config.top_k,
             response_format: None,
             search_parameters: None,
         };
@@ -472,10 +562,10 @@ impl ChatProvider for XAI {
         let mut request = self
             .client
             .post("https://api.x.ai/v1/chat/completions")
-            .bearer_auth(&self.api_key)
+            .bearer_auth(&self.config.api_key)
             .json(&body);
 
-        if let Some(timeout) = self.timeout_seconds {
+        if let Some(timeout) = self.config.timeout_seconds {
             request = request.timeout(std::time::Duration::from_secs(timeout));
         }
 
@@ -520,26 +610,27 @@ impl CompletionProvider for XAI {
 #[async_trait]
 impl EmbeddingProvider for XAI {
     async fn embed(&self, text: Vec<String>) -> Result<Vec<Vec<f32>>, LLMError> {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing X.AI API key".into()));
         }
 
         let emb_format = self
+            .config
             .embedding_encoding_format
             .clone()
             .unwrap_or_else(|| "float".to_string());
 
         let body = XAIEmbeddingRequest {
-            model: &self.model,
+            model: &self.config.model,
             input: text,
             encoding_format: Some(&emb_format),
-            dimensions: self.embedding_dimensions,
+            dimensions: self.config.embedding_dimensions,
         };
 
         let resp = self
             .client
             .post("https://api.x.ai/v1/embeddings")
-            .bearer_auth(&self.api_key)
+            .bearer_auth(&self.config.api_key)
             .json(&body)
             .send()
             .await?
@@ -570,16 +661,16 @@ impl ModelsProvider for XAI {
         &self,
         _request: Option<&ModelListRequest>,
     ) -> Result<Box<dyn ModelListResponse>, LLMError> {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing X.AI API key".to_string()));
         }
 
         let mut request = self
             .client
             .get("https://api.x.ai/v1/models")
-            .bearer_auth(&self.api_key);
+            .bearer_auth(&self.config.api_key);
 
-        if let Some(timeout) = self.timeout_seconds {
+        if let Some(timeout) = self.config.timeout_seconds {
             request = request.timeout(std::time::Duration::from_secs(timeout));
         }
 

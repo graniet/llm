@@ -3,6 +3,7 @@
 //! This module provides integration with Ollama's local LLM server through its API.
 
 use std::pin::Pin;
+use std::sync::Arc;
 
 use crate::{
     builder::LLMBackend,
@@ -26,24 +27,44 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Configuration for the Ollama client.
+#[derive(Debug)]
+pub struct OllamaConfig {
+    /// Base URL for the Ollama API.
+    pub base_url: String,
+    /// Optional API key for authentication.
+    pub api_key: Option<String>,
+    /// Model identifier.
+    pub model: String,
+    /// Maximum tokens to generate in responses.
+    pub max_tokens: Option<u32>,
+    /// Sampling temperature for response randomness.
+    pub temperature: Option<f32>,
+    /// System prompt to guide model behavior.
+    pub system: Option<String>,
+    /// Request timeout in seconds.
+    pub timeout_seconds: Option<u64>,
+    /// Top-p (nucleus) sampling parameter.
+    pub top_p: Option<f32>,
+    /// Top-k sampling parameter.
+    pub top_k: Option<u32>,
+    /// JSON schema for structured output.
+    pub json_schema: Option<StructuredOutputFormat>,
+    /// Available tools for the model to use.
+    pub tools: Option<Vec<Tool>>,
+}
+
 /// Client for interacting with Ollama's API.
 ///
 /// Provides methods for chat and completion requests using Ollama's models.
+///
+/// The client uses `Arc` internally for configuration, making cloning cheap.
+#[derive(Debug, Clone)]
 pub struct Ollama {
-    pub base_url: String,
-    pub api_key: Option<String>,
-    pub model: String,
-    pub max_tokens: Option<u32>,
-    pub temperature: Option<f32>,
-    pub system: Option<String>,
-    pub timeout_seconds: Option<u64>,
-    pub top_p: Option<f32>,
-    pub top_k: Option<u32>,
-    /// JSON schema for structured output
-    pub json_schema: Option<StructuredOutputFormat>,
-    /// Available tools for function calling
-    pub tools: Option<Vec<Tool>>,
-    client: Client,
+    /// Shared configuration wrapped in Arc for cheap cloning.
+    pub config: Arc<OllamaConfig>,
+    /// HTTP client for making requests.
+    pub client: Client,
 }
 
 /// Request payload for Ollama's chat API endpoint.
@@ -299,7 +320,6 @@ impl Ollama {
     /// * `temperature` - Sampling temperature
     /// * `timeout_seconds` - Request timeout in seconds
     /// * `system` - System prompt
-    /// * `stream` - Whether to stream responses
     /// * `json_schema` - JSON schema for structured output
     /// * `tools` - Function tools that the model can use
     #[allow(clippy::too_many_arguments)]
@@ -321,20 +341,102 @@ impl Ollama {
         if let Some(sec) = timeout_seconds {
             builder = builder.timeout(std::time::Duration::from_secs(sec));
         }
-        Self {
-            base_url: base_url.into(),
+        Self::with_client(
+            builder.build().expect("Failed to build reqwest Client"),
+            base_url,
             api_key,
-            model: model.unwrap_or("llama3.1".to_string()),
-            temperature,
+            model,
             max_tokens,
+            temperature,
             timeout_seconds,
             system,
             top_p,
             top_k,
             json_schema,
             tools,
-            client: builder.build().expect("Failed to build reqwest Client"),
+        )
+    }
+
+    /// Creates a new Ollama client with a custom HTTP client.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_client(
+        client: Client,
+        base_url: impl Into<String>,
+        api_key: Option<String>,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<String>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+        json_schema: Option<StructuredOutputFormat>,
+        tools: Option<Vec<Tool>>,
+    ) -> Self {
+        Self {
+            config: Arc::new(OllamaConfig {
+                base_url: base_url.into(),
+                api_key,
+                model: model.unwrap_or("llama3.1".to_string()),
+                temperature,
+                max_tokens,
+                timeout_seconds,
+                system,
+                top_p,
+                top_k,
+                json_schema,
+                tools,
+            }),
+            client,
         }
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.config.base_url
+    }
+
+    pub fn api_key(&self) -> Option<&str> {
+        self.config.api_key.as_deref()
+    }
+
+    pub fn model(&self) -> &str {
+        &self.config.model
+    }
+
+    pub fn max_tokens(&self) -> Option<u32> {
+        self.config.max_tokens
+    }
+
+    pub fn temperature(&self) -> Option<f32> {
+        self.config.temperature
+    }
+
+    pub fn timeout_seconds(&self) -> Option<u64> {
+        self.config.timeout_seconds
+    }
+
+    pub fn system(&self) -> Option<&str> {
+        self.config.system.as_deref()
+    }
+
+    pub fn top_p(&self) -> Option<f32> {
+        self.config.top_p
+    }
+
+    pub fn top_k(&self) -> Option<u32> {
+        self.config.top_k
+    }
+
+    pub fn json_schema(&self) -> Option<&StructuredOutputFormat> {
+        self.config.json_schema.as_ref()
+    }
+
+    pub fn tools(&self) -> Option<&[Tool]> {
+        self.config.tools.as_deref()
+    }
+
+    pub fn client(&self) -> &Client {
+        &self.client
     }
 
     fn make_chat_request<'a>(
@@ -346,7 +448,7 @@ impl Ollama {
         let mut chat_messages: Vec<OllamaChatMessage> =
             messages.iter().map(OllamaChatMessage::from).collect();
 
-        if let Some(system) = &self.system {
+        if let Some(system) = &self.config.system {
             chat_messages.insert(
                 0,
                 OllamaChatMessage {
@@ -361,7 +463,7 @@ impl Ollama {
         let ollama_tools = tools.map(|t| t.iter().map(OllamaTool::from).collect());
 
         // Ollama doesn't require the "name" field in the schema, so we just use the schema itself
-        let format = if let Some(schema) = &self.json_schema {
+        let format = if let Some(schema) = &self.config.json_schema {
             schema.schema.as_ref().map(|schema| OllamaResponseFormat {
                 format: OllamaResponseType::StructuredOutput(schema.clone()),
             })
@@ -370,12 +472,12 @@ impl Ollama {
         };
 
         OllamaChatRequest {
-            model: self.model.clone(),
+            model: self.config.model.clone(),
             messages: chat_messages,
             stream,
             options: Some(OllamaOptions {
-                top_p: self.top_p,
-                top_k: self.top_k,
+                top_p: self.config.top_p,
+                top_k: self.config.top_k,
             }),
             format,
             tools: ollama_tools,
@@ -390,7 +492,7 @@ impl ChatProvider for Ollama {
         messages: &[ChatMessage],
         tools: Option<&[Tool]>,
     ) -> Result<Box<dyn ChatResponse>, LLMError> {
-        if self.base_url.is_empty() {
+        if self.config.base_url.is_empty() {
             return Err(LLMError::InvalidRequest("Missing base_url".to_string()));
         }
 
@@ -402,11 +504,11 @@ impl ChatProvider for Ollama {
             }
         }
 
-        let url = format!("{}/api/chat", self.base_url);
+        let url = format!("{}/api/chat", self.config.base_url);
 
         let mut request = self.client.post(&url).json(&req_body);
 
-        if let Some(timeout) = self.timeout_seconds {
+        if let Some(timeout) = self.config.timeout_seconds {
             request = request.timeout(std::time::Duration::from_secs(timeout));
         }
 
@@ -426,10 +528,10 @@ impl ChatProvider for Ollama {
     ) -> Result<Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send>>, LLMError> {
         let req_body = self.make_chat_request(messages, None, true);
 
-        let url = format!("{}/api/chat", self.base_url);
+        let url = format!("{}/api/chat", self.config.base_url);
         let mut request = self.client.post(&url).json(&req_body);
 
-        if let Some(timeout) = self.timeout_seconds {
+        if let Some(timeout) = self.config.timeout_seconds {
             request = request.timeout(std::time::Duration::from_secs(timeout));
         }
 
@@ -454,13 +556,13 @@ impl CompletionProvider for Ollama {
     ///
     /// The completion response containing the generated text or an error
     async fn complete(&self, req: &CompletionRequest) -> Result<CompletionResponse, LLMError> {
-        if self.base_url.is_empty() {
+        if self.config.base_url.is_empty() {
             return Err(LLMError::InvalidRequest("Missing base_url".to_string()));
         }
-        let url = format!("{}/api/generate", self.base_url);
+        let url = format!("{}/api/generate", self.config.base_url);
 
         let req_body = OllamaGenerateRequest {
-            model: self.model.clone(),
+            model: self.config.model.clone(),
             prompt: &req.prompt,
             raw: true,
             stream: false,
@@ -488,13 +590,13 @@ impl CompletionProvider for Ollama {
 #[async_trait]
 impl EmbeddingProvider for Ollama {
     async fn embed(&self, text: Vec<String>) -> Result<Vec<Vec<f32>>, LLMError> {
-        if self.base_url.is_empty() {
+        if self.config.base_url.is_empty() {
             return Err(LLMError::InvalidRequest("Missing base_url".to_string()));
         }
-        let url = format!("{}/api/embed", self.base_url);
+        let url = format!("{}/api/embed", self.config.base_url);
 
         let body = OllamaEmbeddingRequest {
-            model: self.model.clone(),
+            model: self.config.model.clone(),
             input: text,
         };
 
@@ -582,15 +684,15 @@ impl ModelsProvider for Ollama {
         &self,
         _request: Option<&ModelListRequest>,
     ) -> Result<Box<dyn ModelListResponse>, LLMError> {
-        if self.base_url.is_empty() {
+        if self.config.base_url.is_empty() {
             return Err(LLMError::InvalidRequest("Missing base_url".to_string()));
         }
 
-        let url = format!("{}/api/tags", self.base_url);
+        let url = format!("{}/api/tags", self.config.base_url);
 
         let mut request = self.client.get(&url);
 
-        if let Some(timeout) = self.timeout_seconds {
+        if let Some(timeout) = self.config.timeout_seconds {
             request = request.timeout(std::time::Duration::from_secs(timeout));
         }
 
@@ -602,7 +704,7 @@ impl ModelsProvider for Ollama {
 
 impl crate::LLMProvider for Ollama {
     fn tools(&self) -> Option<&[Tool]> {
-        self.tools.as_deref()
+        self.config.tools.as_deref()
     }
 }
 

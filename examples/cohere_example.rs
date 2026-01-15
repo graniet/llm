@@ -13,7 +13,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let llm = LLMBuilder::new()
         .backend(LLMBackend::Cohere) // Use Cohere as LLM provider
         .api_key(api_key) // Set API key
-        .model("command-light") // Choose a Cohere model (free-tier)
+        .model("command-a-03-2025") // Choose a Cohere model (free-tier)
         .system("Answer like a pirate.") // System instruction (sent with 'developer' role)
         .max_tokens(200) // Limit response length
         .temperature(0.7) // Set response creativity

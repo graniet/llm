@@ -45,6 +45,7 @@ impl HuggingFace {
         top_k: Option<u32>,
         tools: Option<Vec<Tool>>,
         tool_choice: Option<ToolChoice>,
+        extra_body: Option<serde_json::Value>,
         _embedding_encoding_format: Option<String>,
         _embedding_dimensions: Option<u32>,
         reasoning_effort: Option<String>,
@@ -67,6 +68,7 @@ impl HuggingFace {
             reasoning_effort,
             json_schema,
             None, // voice
+            extra_body,
             parallel_tool_calls,
             normalize_response,
             None, // embedding_encoding_format
@@ -77,7 +79,7 @@ impl HuggingFace {
 
 impl LLMProvider for HuggingFace {
     fn tools(&self) -> Option<&[Tool]> {
-        self.tools.as_deref()
+        self.config.tools.as_deref()
     }
 }
 
@@ -117,7 +119,7 @@ impl ModelsProvider for HuggingFace {
         &self,
         _request: Option<&ModelListRequest>,
     ) -> Result<Box<dyn ModelListResponse>, LLMError> {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError(
                 "Missing HuggingFace API key".to_string(),
             ));
@@ -128,7 +130,7 @@ impl ModelsProvider for HuggingFace {
         let resp = self
             .client
             .get(&url)
-            .bearer_auth(&self.api_key)
+            .bearer_auth(&self.config.api_key)
             .send()
             .await?
             .error_for_status()?;

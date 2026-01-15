@@ -39,3 +39,6 @@ pub mod mistral;
 
 #[cfg(feature = "huggingface")]
 pub mod huggingface;
+
+#[cfg(feature = "bedrock")]
+pub mod aws;
