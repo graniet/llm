@@ -3,11 +3,13 @@
 //! This module provides integration with Anthropic's Claude models through their API.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::{
     builder::{LLMBackend, SystemContent, SystemPrompt},
     chat::{
-        ChatMessage, ChatProvider, ChatResponse, ChatRole, MessageType, Tool, ToolChoice, Usage,
+        ChatMessage, ChatProvider, ChatResponse, ChatRole, MessageType, StreamChunk, Tool,
+        ToolChoice, Usage,
     },
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
@@ -25,24 +27,51 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Configuration for the Anthropic client.
+///
+/// This struct holds all configuration options and is wrapped in an `Arc`
+/// to enable cheap cloning of the `Anthropic` client.
+#[derive(Debug)]
+pub struct AnthropicConfig {
+    /// API key for authentication with Anthropic.
+    pub api_key: String,
+    /// Model identifier (e.g., "claude-3-sonnet-20240229").
+    pub model: String,
+    /// Maximum tokens to generate in responses.
+    pub max_tokens: u32,
+    /// Sampling temperature for response randomness.
+    pub temperature: f32,
+    /// Request timeout in seconds.
+    pub timeout_seconds: u64,
+    /// System prompt to guide model behavior.
+    pub system: SystemPrompt,
+    /// Top-p (nucleus) sampling parameter.
+    pub top_p: Option<f32>,
+    /// Top-k sampling parameter.
+    pub top_k: Option<u32>,
+    /// Available tools for the model to use.
+    pub tools: Option<Vec<Tool>>,
+    /// Tool choice configuration.
+    pub tool_choice: Option<ToolChoice>,
+    /// Whether extended thinking is enabled.
+    pub reasoning: bool,
+    /// Budget tokens for extended thinking.
+    pub thinking_budget_tokens: Option<u32>,
+}
+
 /// Client for interacting with Anthropic's API.
 ///
 /// Provides methods for chat and completion requests using Anthropic's models.
-#[derive(Debug)]
+///
+/// The client uses `Arc` internally for configuration, making cloning cheap
+/// (only an atomic reference count increment). This allows sharing a single
+/// client across multiple tasks without expensive deep copies.
+#[derive(Debug, Clone)]
 pub struct Anthropic {
-    pub api_key: String,
-    pub model: String,
-    pub max_tokens: u32,
-    pub temperature: f32,
-    pub timeout_seconds: u64,
-    pub system: SystemPrompt,
-    pub top_p: Option<f32>,
-    pub top_k: Option<u32>,
-    pub tools: Option<Vec<Tool>>,
-    pub tool_choice: Option<ToolChoice>,
-    pub reasoning: bool,
-    pub thinking_budget_tokens: Option<u32>,
-    client: Client,
+    /// Shared configuration wrapped in Arc for cheap cloning.
+    pub config: Arc<AnthropicConfig>,
+    /// HTTP client for making requests.
+    pub client: Client,
 }
 
 /// Anthropic-specific tool format that matches their API structure
@@ -170,20 +199,45 @@ struct AnthropicContent {
 }
 
 /// Response from Anthropic's streaming messages API endpoint.
+/// https://docs.anthropic.com/en/api/messages-streaming
+/// https://docs.anthropic.com/claude/reference/messages-streaming
 #[derive(Deserialize, Debug)]
 struct AnthropicStreamResponse {
     #[serde(rename = "type")]
     response_type: String,
+    /// Index of the content block (for content_block_start, content_block_delta, content_block_stop)
+    index: Option<usize>,
+    /// Content block for content_block_start events
+    content_block: Option<AnthropicStreamContentBlock>,
+    /// Delta for content_block_delta and message_delta events
     delta: Option<AnthropicDelta>,
+}
+
+/// Content block within an Anthropic streaming content_block_start event.
+#[derive(Deserialize, Debug)]
+struct AnthropicStreamContentBlock {
+    #[serde(rename = "type")]
+    block_type: String,
+    /// Tool use ID (for tool_use blocks)
+    id: Option<String>,
+    /// Tool name (for tool_use blocks)
+    name: Option<String>,
+    /// Initial text (for text blocks, usually empty)
+    #[allow(dead_code)]
+    text: Option<String>,
 }
 
 /// Delta content within an Anthropic streaming response.
 #[derive(Deserialize, Debug)]
 struct AnthropicDelta {
-    #[allow(dead_code)]
     #[serde(rename = "type")]
     delta_type: Option<String>,
+    /// Text content (for text_delta)
     text: Option<String>,
+    /// Partial JSON string (for input_json_delta)
+    partial_json: Option<String>,
+    /// Stop reason (for message_delta)
+    stop_reason: Option<String>,
 }
 
 impl std::fmt::Display for AnthropicCompleteResponse {
@@ -289,91 +343,12 @@ impl ChatResponse for AnthropicCompleteResponse {
 }
 
 impl Anthropic {
-    /// Creates a new Anthropic client with the specified configuration.
+    /// Converts a slice of ChatMessage into Anthropic's message format.
     ///
-    /// # Arguments
-    ///
-    /// * `api_key` - Anthropic API key for authentication
-    /// * `model` - Model identifier (defaults to "claude-3-sonnet-20240229")
-    /// * `max_tokens` - Maximum tokens in response (defaults to 300)
-    /// * `temperature` - Sampling temperature (defaults to 0.7)
-    /// * `timeout_seconds` - Request timeout in seconds (defaults to 30)
-    /// * `system` - System prompt (defaults to "You are a helpful assistant.")
-    /// *
-    /// * `thinking_budget_tokens` - Budget tokens for thinking (optional)
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        api_key: impl Into<String>,
-        model: Option<String>,
-        max_tokens: Option<u32>,
-        temperature: Option<f32>,
-        timeout_seconds: Option<u64>,
-        system: Option<SystemPrompt>,
-        top_p: Option<f32>,
-        top_k: Option<u32>,
-        tools: Option<Vec<Tool>>,
-        tool_choice: Option<ToolChoice>,
-        reasoning: Option<bool>,
-        thinking_budget_tokens: Option<u32>,
-    ) -> Self {
-        let mut builder = Client::builder();
-        if let Some(sec) = timeout_seconds {
-            builder = builder.timeout(std::time::Duration::from_secs(sec));
-        }
-        Self {
-            api_key: api_key.into(),
-            model: model.unwrap_or_else(|| "claude-3-sonnet-20240229".to_string()),
-            max_tokens: max_tokens.unwrap_or(300),
-            temperature: temperature.unwrap_or(0.7),
-            system: system.unwrap_or_else(|| {
-                SystemPrompt::String("You are a helpful assistant.".to_string())
-            }),
-            timeout_seconds: timeout_seconds.unwrap_or(30),
-            top_p,
-            top_k,
-            tools,
-            tool_choice,
-            reasoning: reasoning.unwrap_or(false),
-            thinking_budget_tokens,
-            client: builder.build().expect("Failed to build reqwest Client"),
-        }
-    }
-
-    /// Sets the system prompt using a vector of SystemContent objects
-    pub fn with_system_messages(mut self, messages: Vec<SystemContent>) -> Self {
-        self.system = SystemPrompt::Messages(messages);
-        self
-    }
-
-    /// Sets the system prompt using a string
-    pub fn with_system_string(mut self, system: String) -> Self {
-        self.system = SystemPrompt::String(system);
-        self
-    }
-}
-
-#[async_trait]
-impl ChatProvider for Anthropic {
-    /// Sends a chat request to Anthropic's API.
-    ///
-    /// # Arguments
-    ///
-    /// * `messages` - Slice of chat messages representing the conversation
-    /// * `tools` - Optional slice of tools to use in the chat
-    ///
-    /// # Returns
-    ///
-    /// The model's response text or an error
-    async fn chat_with_tools(
-        &self,
-        messages: &[ChatMessage],
-        tools: Option<&[Tool]>,
-    ) -> Result<Box<dyn ChatResponse>, LLMError> {
-        if self.api_key.is_empty() {
-            return Err(LLMError::AuthError("Missing Anthropic API key".to_string()));
-        }
-
-        let anthropic_messages: Vec<AnthropicMessage> = messages
+    /// This helper method handles all message types including text, images, PDFs,
+    /// tool use, and tool results.
+    fn convert_messages_to_anthropic<'a>(messages: &'a [ChatMessage]) -> Vec<AnthropicMessage<'a>> {
+        messages
             .iter()
             .map(|m| AnthropicMessage {
                 role: match m.role {
@@ -392,7 +367,23 @@ impl ChatProvider for Anthropic {
                         tool_result_id: None,
                         tool_output: None,
                     }],
-                    MessageType::Pdf(_) => unimplemented!(),
+                    MessageType::Pdf(raw_bytes) => {
+                        vec![MessageContent {
+                            message_type: Some("document"),
+                            text: None,
+                            image_url: None,
+                            source: Some(ImageSource {
+                                source_type: "base64",
+                                media_type: "application/pdf",
+                                data: BASE64.encode(raw_bytes),
+                            }),
+                            tool_use_id: None,
+                            tool_input: None,
+                            tool_name: None,
+                            tool_result_id: None,
+                            tool_output: None,
+                        }]
+                    }
                     MessageType::Image((image_mime, raw_bytes)) => {
                         vec![MessageContent {
                             message_type: Some("image"),
@@ -454,9 +445,21 @@ impl ChatProvider for Anthropic {
                         .collect(),
                 },
             })
-            .collect();
+            .collect()
+    }
 
-        let maybe_tool_slice: Option<&[Tool]> = tools.or(self.tools.as_deref());
+    /// Prepares Anthropic tools and tool_choice from the provided tools and instance configuration.
+    ///
+    /// Returns a tuple of (anthropic_tools, final_tool_choice) ready for the API request.
+    fn prepare_tools_and_choice<'a>(
+        tools: Option<&'a [Tool]>,
+        instance_tools: Option<&'a [Tool]>,
+        tool_choice: &Option<ToolChoice>,
+    ) -> (
+        Option<Vec<AnthropicTool<'a>>>,
+        Option<HashMap<String, String>>,
+    ) {
+        let maybe_tool_slice: Option<&[Tool]> = tools.or(instance_tools);
         let anthropic_tools = maybe_tool_slice.map(|slice| {
             slice
                 .iter()
@@ -468,7 +471,7 @@ impl ChatProvider for Anthropic {
                 .collect::<Vec<_>>()
         });
 
-        let tool_choice = match self.tool_choice {
+        let tool_choice_map = match tool_choice {
             Some(ToolChoice::Auto) => {
                 Some(HashMap::from([("type".to_string(), "auto".to_string())]))
             }
@@ -484,34 +487,224 @@ impl ChatProvider for Anthropic {
         };
 
         let final_tool_choice = if anthropic_tools.is_some() {
-            tool_choice.clone()
+            tool_choice_map
         } else {
             None
         };
 
-        let thinking = if self.reasoning {
+        (anthropic_tools, final_tool_choice)
+    }
+
+    /// Converts a SystemPrompt to the request format
+    fn system_to_request(system: &SystemPrompt) -> RequestSystemPrompt<'_> {
+        match system {
+            SystemPrompt::String(s) => RequestSystemPrompt::String(s),
+            SystemPrompt::Messages(msgs) => RequestSystemPrompt::Messages(msgs),
+        }
+    }
+
+    /// Creates a new Anthropic client with the specified configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `api_key` - Anthropic API key for authentication
+    /// * `model` - Model identifier (defaults to "claude-3-sonnet-20240229")
+    /// * `max_tokens` - Maximum tokens in response (defaults to 300)
+    /// * `temperature` - Sampling temperature (defaults to 0.7)
+    /// * `timeout_seconds` - Request timeout in seconds (defaults to 30)
+    /// * `system` - System prompt (defaults to "You are a helpful assistant.")
+    /// * `thinking_budget_tokens` - Budget tokens for thinking (optional)
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        api_key: impl Into<String>,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<SystemPrompt>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+        tools: Option<Vec<Tool>>,
+        tool_choice: Option<ToolChoice>,
+        reasoning: Option<bool>,
+        thinking_budget_tokens: Option<u32>,
+    ) -> Self {
+        let timeout = timeout_seconds.unwrap_or(30);
+        let mut builder = Client::builder();
+        if timeout > 0 {
+            builder = builder.timeout(std::time::Duration::from_secs(timeout));
+        }
+        Self::with_client(
+            builder.build().expect("Failed to build reqwest Client"),
+            api_key,
+            model,
+            max_tokens,
+            temperature,
+            timeout_seconds,
+            system,
+            top_p,
+            top_k,
+            tools,
+            tool_choice,
+            reasoning,
+            thinking_budget_tokens,
+        )
+    }
+
+    /// Creates a new Anthropic client with a custom HTTP client.
+    ///
+    /// This constructor allows sharing a pre-configured `reqwest::Client` across
+    /// multiple provider instances, enabling connection pooling and custom
+    /// HTTP settings.
+    ///
+    /// # Arguments
+    ///
+    /// * `client` - A pre-configured `reqwest::Client` for HTTP requests
+    /// * `api_key` - Anthropic API key for authentication
+    /// * `model` - Model identifier (defaults to "claude-3-sonnet-20240229")
+    /// * `max_tokens` - Maximum tokens in response (defaults to 300)
+    /// * `temperature` - Sampling temperature (defaults to 0.7)
+    /// * `timeout_seconds` - Request timeout in seconds (defaults to 30)
+    /// * `system` - System prompt (defaults to "You are a helpful assistant.")
+    /// * `thinking_budget_tokens` - Budget tokens for thinking (optional)
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_client(
+        client: Client,
+        api_key: impl Into<String>,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<SystemPrompt>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+        tools: Option<Vec<Tool>>,
+        tool_choice: Option<ToolChoice>,
+        reasoning: Option<bool>,
+        thinking_budget_tokens: Option<u32>,
+    ) -> Self {
+        Self {
+            config: Arc::new(AnthropicConfig {
+                api_key: api_key.into(),
+                model: model.unwrap_or_else(|| "claude-3-sonnet-20240229".to_string()),
+                max_tokens: max_tokens.unwrap_or(300),
+                temperature: temperature.unwrap_or(0.7),
+                system: system.unwrap_or_else(|| {
+                    SystemPrompt::String("You are a helpful assistant.".to_string())
+                }),
+                timeout_seconds: timeout_seconds.unwrap_or(30),
+                top_p,
+                top_k,
+                tools,
+                tool_choice,
+                reasoning: reasoning.unwrap_or(false),
+                thinking_budget_tokens,
+            }),
+            client,
+        }
+    }
+
+    pub fn api_key(&self) -> &str {
+        &self.config.api_key
+    }
+
+    pub fn model(&self) -> &str {
+        &self.config.model
+    }
+
+    pub fn max_tokens(&self) -> u32 {
+        self.config.max_tokens
+    }
+
+    pub fn temperature(&self) -> f32 {
+        self.config.temperature
+    }
+
+    pub fn timeout_seconds(&self) -> u64 {
+        self.config.timeout_seconds
+    }
+
+    pub fn system(&self) -> &SystemPrompt {
+        &self.config.system
+    }
+
+    pub fn top_p(&self) -> Option<f32> {
+        self.config.top_p
+    }
+
+    pub fn top_k(&self) -> Option<u32> {
+        self.config.top_k
+    }
+
+    pub fn tools(&self) -> Option<&[Tool]> {
+        self.config.tools.as_deref()
+    }
+
+    pub fn tool_choice(&self) -> Option<&ToolChoice> {
+        self.config.tool_choice.as_ref()
+    }
+
+    pub fn reasoning(&self) -> bool {
+        self.config.reasoning
+    }
+
+    pub fn thinking_budget_tokens(&self) -> Option<u32> {
+        self.config.thinking_budget_tokens
+    }
+
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+}
+
+#[async_trait]
+impl ChatProvider for Anthropic {
+    /// Sends a chat request to Anthropic's API.
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - Slice of chat messages representing the conversation
+    /// * `tools` - Optional slice of tools to use in the chat
+    ///
+    /// # Returns
+    ///
+    /// The model's response text or an error
+    async fn chat_with_tools(
+        &self,
+        messages: &[ChatMessage],
+        tools: Option<&[Tool]>,
+    ) -> Result<Box<dyn ChatResponse>, LLMError> {
+        if self.config.api_key.is_empty() {
+            return Err(LLMError::AuthError("Missing Anthropic API key".to_string()));
+        }
+
+        let anthropic_messages = Self::convert_messages_to_anthropic(messages);
+        let (anthropic_tools, final_tool_choice) = Self::prepare_tools_and_choice(
+            tools,
+            self.config.tools.as_deref(),
+            &self.config.tool_choice,
+        );
+
+        let thinking = if self.config.reasoning {
             Some(ThinkingConfig {
                 thinking_type: "enabled".to_string(),
-                budget_tokens: self.thinking_budget_tokens.unwrap_or(16000),
+                budget_tokens: self.config.thinking_budget_tokens.unwrap_or(16000),
             })
         } else {
             None
         };
 
-        let system_prompt = match &self.system {
-            SystemPrompt::String(s) => Some(RequestSystemPrompt::String(s)),
-            SystemPrompt::Messages(msgs) => Some(RequestSystemPrompt::Messages(msgs)),
-        };
+        let system_prompt = Self::system_to_request(&self.config.system);
 
         let req_body = AnthropicCompleteRequest {
             messages: anthropic_messages,
-            model: &self.model,
-            max_tokens: Some(self.max_tokens),
-            temperature: Some(self.temperature),
-            system: system_prompt,
+            model: &self.config.model,
+            max_tokens: Some(self.config.max_tokens),
+            temperature: Some(self.config.temperature),
+            system: Some(system_prompt),
             stream: Some(false),
-            top_p: self.top_p,
-            top_k: self.top_k,
+            top_p: self.config.top_p,
+            top_k: self.config.top_k,
             tools: anthropic_tools,
             tool_choice: final_tool_choice,
             thinking,
@@ -520,13 +713,13 @@ impl ChatProvider for Anthropic {
         let mut request = self
             .client
             .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &self.api_key)
+            .header("x-api-key", &self.config.api_key)
             .header("Content-Type", "application/json")
             .header("anthropic-version", "2023-06-01")
             .json(&req_body);
 
-        if self.timeout_seconds > 0 {
-            request = request.timeout(std::time::Duration::from_secs(self.timeout_seconds));
+        if self.config.timeout_seconds > 0 {
+            request = request.timeout(std::time::Duration::from_secs(self.config.timeout_seconds));
         }
 
         if log::log_enabled!(log::Level::Trace) {
@@ -574,7 +767,7 @@ impl ChatProvider for Anthropic {
         messages: &[ChatMessage],
     ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send>>, LLMError>
     {
-        if self.api_key.is_empty() {
+        if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Anthropic API key".to_string()));
         }
 
@@ -630,20 +823,17 @@ impl ChatProvider for Anthropic {
             })
             .collect();
 
-        let system_prompt = match &self.system {
-            SystemPrompt::String(s) => Some(RequestSystemPrompt::String(s)),
-            SystemPrompt::Messages(msgs) => Some(RequestSystemPrompt::Messages(msgs)),
-        };
+        let system_prompt = Self::system_to_request(&self.config.system);
 
         let req_body = AnthropicCompleteRequest {
             messages: anthropic_messages,
-            model: &self.model,
-            max_tokens: Some(self.max_tokens),
-            temperature: Some(self.temperature),
-            system: system_prompt,
+            model: &self.config.model,
+            max_tokens: Some(self.config.max_tokens),
+            temperature: Some(self.config.temperature),
+            system: Some(system_prompt),
             stream: Some(true),
-            top_p: self.top_p,
-            top_k: self.top_k,
+            top_p: self.config.top_p,
+            top_k: self.config.top_k,
             tools: None,
             tool_choice: None,
             thinking: None,
@@ -652,13 +842,13 @@ impl ChatProvider for Anthropic {
         let mut request = self
             .client
             .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &self.api_key)
+            .header("x-api-key", &self.config.api_key)
             .header("Content-Type", "application/json")
             .header("anthropic-version", "2023-06-01")
             .json(&req_body);
 
-        if self.timeout_seconds > 0 {
-            request = request.timeout(std::time::Duration::from_secs(self.timeout_seconds));
+        if self.config.timeout_seconds > 0 {
+            request = request.timeout(std::time::Duration::from_secs(self.config.timeout_seconds));
         }
 
         let response = request.send().await?;
@@ -675,6 +865,140 @@ impl ChatProvider for Anthropic {
             parse_anthropic_sse_chunk,
         ))
     }
+
+    /// Sends a streaming chat request with tool support.
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - Slice of chat messages representing the conversation
+    /// * `tools` - Optional slice of tools available for the model to use
+    ///
+    /// # Returns
+    ///
+    /// A stream of `StreamChunk` items or an error
+    async fn chat_stream_with_tools(
+        &self,
+        messages: &[ChatMessage],
+        tools: Option<&[Tool]>,
+    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Result<StreamChunk, LLMError>> + Send>>, LLMError>
+    {
+        if self.config.api_key.is_empty() {
+            return Err(LLMError::AuthError("Missing Anthropic API key".to_string()));
+        }
+
+        let anthropic_messages = Self::convert_messages_to_anthropic(messages);
+        let (anthropic_tools, final_tool_choice) = Self::prepare_tools_and_choice(
+            tools,
+            self.config.tools.as_deref(),
+            &self.config.tool_choice,
+        );
+
+        let system_prompt = Self::system_to_request(&self.config.system);
+
+        let req_body = AnthropicCompleteRequest {
+            messages: anthropic_messages,
+            model: &self.config.model,
+            max_tokens: Some(self.config.max_tokens),
+            temperature: Some(self.config.temperature),
+            system: Some(system_prompt),
+            stream: Some(true),
+            top_p: self.config.top_p,
+            top_k: self.config.top_k,
+            tools: anthropic_tools,
+            tool_choice: final_tool_choice,
+            thinking: None, // Thinking not supported with streaming tools
+        };
+
+        let mut request = self
+            .client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &self.config.api_key)
+            .header("Content-Type", "application/json")
+            .header("anthropic-version", "2023-06-01")
+            .json(&req_body);
+
+        if self.config.timeout_seconds > 0 {
+            request = request.timeout(std::time::Duration::from_secs(self.config.timeout_seconds));
+        }
+
+        if log::log_enabled!(log::Level::Trace) {
+            if let Ok(json) = serde_json::to_string(&req_body) {
+                log::trace!("Anthropic streaming request payload: {}", json);
+            }
+        }
+
+        log::debug!("Anthropic request: POST /v1/messages (streaming with tools)");
+        let response = request.send().await?;
+        log::debug!("Anthropic HTTP status: {}", response.status());
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await?;
+            return Err(LLMError::ResponseFormatError {
+                message: format!("Anthropic API returned error status: {status}"),
+                raw_response: error_text,
+            });
+        }
+
+        Ok(create_anthropic_tool_stream(response))
+    }
+}
+
+/// Creates an SSE stream that parses Anthropic tool use events into StreamChunk.
+fn create_anthropic_tool_stream(
+    response: reqwest::Response,
+) -> std::pin::Pin<Box<dyn Stream<Item = Result<StreamChunk, LLMError>> + Send>> {
+    use futures::stream::StreamExt;
+
+    let stream = response
+        .bytes_stream()
+        .scan(
+            (String::new(), Vec::new(), HashMap::new()),
+            move |(buffer, utf8_buffer, tool_states), chunk| {
+                let result = match chunk {
+                    Ok(bytes) => {
+                        utf8_buffer.extend_from_slice(&bytes);
+
+                        match String::from_utf8(utf8_buffer.clone()) {
+                            Ok(text) => {
+                                buffer.push_str(&text);
+                                utf8_buffer.clear();
+                            }
+                            Err(e) => {
+                                let valid_up_to = e.utf8_error().valid_up_to();
+                                if valid_up_to > 0 {
+                                    let valid =
+                                        String::from_utf8_lossy(&utf8_buffer[..valid_up_to]);
+                                    buffer.push_str(&valid);
+                                    utf8_buffer.drain(..valid_up_to);
+                                }
+                            }
+                        }
+
+                        let mut results = Vec::new();
+
+                        while let Some(pos) = buffer.find("\n\n") {
+                            let event = buffer[..pos + 2].to_string();
+                            buffer.drain(..pos + 2);
+
+                            match parse_anthropic_sse_chunk_with_tools(&event, tool_states) {
+                                Ok(Some(chunk)) => results.push(Ok(chunk)),
+                                Ok(None) => {}
+                                Err(e) => results.push(Err(e)),
+                            }
+                        }
+
+                        Some(results)
+                    }
+                    Err(e) => Some(vec![Err(LLMError::HttpError(e.to_string()))]),
+                };
+
+                async move { result }
+            },
+        )
+        .flat_map(futures::stream::iter);
+
+    Box::pin(stream)
 }
 
 #[async_trait]
@@ -761,7 +1085,7 @@ impl ModelsProvider for Anthropic {
         let resp = self
             .client
             .get("https://api.anthropic.com/v1/models")
-            .header("x-api-key", &self.api_key)
+            .header("x-api-key", &self.config.api_key)
             .header("Content-Type", "application/json")
             .header("anthropic-version", "2023-06-01")
             .send()
@@ -775,7 +1099,7 @@ impl ModelsProvider for Anthropic {
 
 impl crate::LLMProvider for Anthropic {
     fn tools(&self) -> Option<&[Tool]> {
-        self.tools.as_deref()
+        self.config.tools.as_deref()
     }
 }
 
@@ -810,4 +1134,422 @@ fn parse_anthropic_sse_chunk(chunk: &str) -> Result<Option<String>, LLMError> {
         }
     }
     Ok(None)
+}
+
+/// State for tracking tool use blocks during streaming
+#[derive(Debug, Default)]
+struct ToolUseState {
+    /// Tool ID
+    id: String,
+    /// Tool name
+    name: String,
+    /// Accumulated JSON input
+    json_buffer: String,
+}
+
+/// Parses Anthropic SSE chunks with tool use support.
+///
+/// This parser handles all Anthropic streaming event types including:
+/// - `content_block_start` with `type: "text"` or `type: "tool_use"`
+/// - `content_block_delta` with `type: "text_delta"` or `type: "input_json_delta"`
+/// - `content_block_stop`
+/// - `message_delta` with `stop_reason`
+///
+/// # Arguments
+///
+/// * `chunk` - The raw SSE chunk text
+/// * `tool_states` - Mutable reference to a map tracking tool use state by index
+///
+/// # Returns
+///
+/// * `Ok(Some(StreamChunk))` - A stream chunk if one was parsed
+/// * `Ok(None)` - If chunk should be skipped
+/// * `Err(LLMError)` - If parsing fails
+fn parse_anthropic_sse_chunk_with_tools(
+    chunk: &str,
+    tool_states: &mut HashMap<usize, ToolUseState>,
+) -> Result<Option<StreamChunk>, LLMError> {
+    for line in chunk.lines() {
+        let line = line.trim();
+        if let Some(data) = line.strip_prefix("data: ") {
+            match serde_json::from_str::<AnthropicStreamResponse>(data) {
+                Ok(response) => {
+                    match response.response_type.as_str() {
+                        "content_block_start" => {
+                            if let (Some(index), Some(content_block)) =
+                                (response.index, response.content_block)
+                            {
+                                if content_block.block_type == "tool_use" {
+                                    let id = content_block.id.unwrap_or_default();
+                                    let name = content_block.name.unwrap_or_default();
+
+                                    // Store state for this tool use block
+                                    tool_states.insert(
+                                        index,
+                                        ToolUseState {
+                                            id: id.clone(),
+                                            name: name.clone(),
+                                            json_buffer: String::new(),
+                                        },
+                                    );
+
+                                    return Ok(Some(StreamChunk::ToolUseStart { index, id, name }));
+                                }
+                                // For text blocks, we just wait for content_block_delta
+                            }
+                        }
+                        "content_block_delta" => {
+                            if let (Some(index), Some(delta)) = (response.index, response.delta) {
+                                // Check delta type
+                                match delta.delta_type.as_deref() {
+                                    Some("text_delta") => {
+                                        if let Some(text) = delta.text {
+                                            return Ok(Some(StreamChunk::Text(text)));
+                                        }
+                                    }
+                                    Some("input_json_delta") => {
+                                        if let Some(partial_json) = delta.partial_json {
+                                            // Accumulate JSON in state
+                                            if let Some(state) = tool_states.get_mut(&index) {
+                                                state.json_buffer.push_str(&partial_json);
+                                            }
+                                            return Ok(Some(StreamChunk::ToolUseInputDelta {
+                                                index,
+                                                partial_json,
+                                            }));
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        "content_block_stop" => {
+                            if let Some(index) = response.index {
+                                // If we have tool state for this index, emit ToolUseComplete
+                                if let Some(state) = tool_states.remove(&index) {
+                                    // Anthropic API requires tool_use.input to be a JSON object.
+                                    // If no input deltas were received (tool has no parameters),
+                                    // default to empty object "{}" instead of empty string "".
+                                    let arguments = if state.json_buffer.is_empty() {
+                                        "{}".to_string()
+                                    } else {
+                                        state.json_buffer
+                                    };
+                                    let tool_call = ToolCall {
+                                        id: state.id,
+                                        call_type: "function".to_string(),
+                                        function: FunctionCall {
+                                            name: state.name,
+                                            arguments,
+                                        },
+                                    };
+                                    return Ok(Some(StreamChunk::ToolUseComplete {
+                                        index,
+                                        tool_call,
+                                    }));
+                                }
+                            }
+                        }
+                        "message_delta" => {
+                            if let Some(delta) = response.delta {
+                                if let Some(stop_reason) = delta.stop_reason {
+                                    return Ok(Some(StreamChunk::Done { stop_reason }));
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    return Ok(None);
+                }
+                Err(_) => continue,
+            }
+        }
+    }
+    Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_stream_text_delta() {
+        let chunk = r#"event: content_block_delta
+data: {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hello"}}
+
+"#;
+        let mut tool_states = HashMap::new();
+        let result = parse_anthropic_sse_chunk_with_tools(chunk, &mut tool_states).unwrap();
+
+        match result {
+            Some(StreamChunk::Text(text)) => assert_eq!(text, "Hello"),
+            _ => panic!("Expected Text chunk, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_parse_stream_tool_use_start() {
+        let chunk = r#"event: content_block_start
+data: {"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "id": "toolu_01ABC", "name": "get_weather", "input": {}}}
+
+"#;
+        let mut tool_states = HashMap::new();
+        let result = parse_anthropic_sse_chunk_with_tools(chunk, &mut tool_states).unwrap();
+
+        match result {
+            Some(StreamChunk::ToolUseStart { index, id, name }) => {
+                assert_eq!(index, 1);
+                assert_eq!(id, "toolu_01ABC");
+                assert_eq!(name, "get_weather");
+            }
+            _ => panic!("Expected ToolUseStart chunk, got {:?}", result),
+        }
+
+        // Verify state was stored
+        assert!(tool_states.contains_key(&1));
+        assert_eq!(tool_states[&1].id, "toolu_01ABC");
+        assert_eq!(tool_states[&1].name, "get_weather");
+    }
+
+    #[test]
+    fn test_parse_stream_tool_use_input_delta() {
+        let chunk = r#"event: content_block_delta
+data: {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": "{\"location\":"}}
+
+"#;
+        let mut tool_states = HashMap::new();
+        // Pre-populate state as if tool_use_start was already processed
+        tool_states.insert(
+            1,
+            ToolUseState {
+                id: "toolu_01ABC".to_string(),
+                name: "get_weather".to_string(),
+                json_buffer: String::new(),
+            },
+        );
+
+        let result = parse_anthropic_sse_chunk_with_tools(chunk, &mut tool_states).unwrap();
+
+        match result {
+            Some(StreamChunk::ToolUseInputDelta {
+                index,
+                partial_json,
+            }) => {
+                assert_eq!(index, 1);
+                assert_eq!(partial_json, "{\"location\":");
+            }
+            _ => panic!("Expected ToolUseInputDelta chunk, got {:?}", result),
+        }
+
+        // Verify JSON was accumulated
+        assert_eq!(tool_states[&1].json_buffer, "{\"location\":");
+    }
+
+    #[test]
+    fn test_parse_stream_tool_use_complete() {
+        let chunk = r#"event: content_block_stop
+data: {"type": "content_block_stop", "index": 1}
+
+"#;
+        let mut tool_states = HashMap::new();
+        // Pre-populate state with accumulated JSON
+        tool_states.insert(
+            1,
+            ToolUseState {
+                id: "toolu_01ABC".to_string(),
+                name: "get_weather".to_string(),
+                json_buffer: r#"{"location": "Paris"}"#.to_string(),
+            },
+        );
+
+        let result = parse_anthropic_sse_chunk_with_tools(chunk, &mut tool_states).unwrap();
+
+        match result {
+            Some(StreamChunk::ToolUseComplete { index, tool_call }) => {
+                assert_eq!(index, 1);
+                assert_eq!(tool_call.id, "toolu_01ABC");
+                assert_eq!(tool_call.function.name, "get_weather");
+                assert_eq!(tool_call.function.arguments, r#"{"location": "Paris"}"#);
+            }
+            _ => panic!("Expected ToolUseComplete chunk, got {:?}", result),
+        }
+
+        // Verify state was removed
+        assert!(!tool_states.contains_key(&1));
+    }
+
+    #[test]
+    fn test_parse_stream_tool_use_complete_empty_arguments() {
+        // Regression test: tools with no parameters should return "{}" not ""
+        // Empty string arguments cause Anthropic API to reject with:
+        // "tool_use.input: Input should be a valid dictionary"
+        let chunk = r#"event: content_block_stop
+data: {"type": "content_block_stop", "index": 1}
+
+"#;
+        let mut tool_states = HashMap::new();
+        // Pre-populate state with EMPTY json_buffer (no input_json_delta events received)
+        tool_states.insert(
+            1,
+            ToolUseState {
+                id: "toolu_01XYZ".to_string(),
+                name: "get_current_time".to_string(),
+                json_buffer: String::new(), // Empty - tool has no parameters
+            },
+        );
+
+        let result = parse_anthropic_sse_chunk_with_tools(chunk, &mut tool_states).unwrap();
+
+        match result {
+            Some(StreamChunk::ToolUseComplete { index, tool_call }) => {
+                assert_eq!(index, 1);
+                assert_eq!(tool_call.id, "toolu_01XYZ");
+                assert_eq!(tool_call.function.name, "get_current_time");
+                // CRITICAL: arguments must be "{}" not "" for Anthropic API compatibility
+                assert_eq!(
+                    tool_call.function.arguments, "{}",
+                    "Empty arguments should default to '{{}}' not empty string"
+                );
+            }
+            _ => panic!("Expected ToolUseComplete chunk, got {:?}", result),
+        }
+
+        // Verify state was removed
+        assert!(!tool_states.contains_key(&1));
+    }
+
+    #[test]
+    fn test_parse_stream_done_tool_use() {
+        let chunk = r#"event: message_delta
+data: {"type": "message_delta", "delta": {"stop_reason": "tool_use"}}
+
+"#;
+        let mut tool_states = HashMap::new();
+        let result = parse_anthropic_sse_chunk_with_tools(chunk, &mut tool_states).unwrap();
+
+        match result {
+            Some(StreamChunk::Done { stop_reason }) => {
+                assert_eq!(stop_reason, "tool_use");
+            }
+            _ => panic!("Expected Done chunk, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_parse_stream_done_end_turn() {
+        let chunk = r#"event: message_delta
+data: {"type": "message_delta", "delta": {"stop_reason": "end_turn"}}
+
+"#;
+        let mut tool_states = HashMap::new();
+        let result = parse_anthropic_sse_chunk_with_tools(chunk, &mut tool_states).unwrap();
+
+        match result {
+            Some(StreamChunk::Done { stop_reason }) => {
+                assert_eq!(stop_reason, "end_turn");
+            }
+            _ => panic!("Expected Done chunk, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_parse_stream_full_tool_use_sequence() {
+        let mut tool_states = HashMap::new();
+
+        // 1. Tool use start
+        let start_chunk = r#"event: content_block_start
+data: {"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "id": "toolu_01ABC", "name": "get_weather", "input": {}}}
+
+"#;
+        let result = parse_anthropic_sse_chunk_with_tools(start_chunk, &mut tool_states).unwrap();
+        assert!(matches!(result, Some(StreamChunk::ToolUseStart { .. })));
+
+        // 2. Input JSON deltas
+        let delta1 = r#"event: content_block_delta
+data: {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": "{\"loc"}}
+
+"#;
+        let _ = parse_anthropic_sse_chunk_with_tools(delta1, &mut tool_states).unwrap();
+
+        let delta2 = r#"event: content_block_delta
+data: {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": "ation\": \"Paris\"}"}}
+
+"#;
+        let _ = parse_anthropic_sse_chunk_with_tools(delta2, &mut tool_states).unwrap();
+
+        // Verify accumulated JSON
+        assert_eq!(tool_states[&1].json_buffer, "{\"location\": \"Paris\"}");
+
+        // 3. Content block stop
+        let stop_chunk = r#"event: content_block_stop
+data: {"type": "content_block_stop", "index": 1}
+
+"#;
+        let result = parse_anthropic_sse_chunk_with_tools(stop_chunk, &mut tool_states).unwrap();
+
+        match result {
+            Some(StreamChunk::ToolUseComplete { tool_call, .. }) => {
+                assert_eq!(tool_call.function.arguments, "{\"location\": \"Paris\"}");
+            }
+            _ => panic!("Expected ToolUseComplete"),
+        }
+
+        // 4. Message delta with stop reason
+        let done_chunk = r#"event: message_delta
+data: {"type": "message_delta", "delta": {"stop_reason": "tool_use"}}
+
+"#;
+        let result = parse_anthropic_sse_chunk_with_tools(done_chunk, &mut tool_states).unwrap();
+        assert!(matches!(
+            result,
+            Some(StreamChunk::Done {
+                stop_reason
+            }) if stop_reason == "tool_use"
+        ));
+    }
+
+    #[test]
+    fn test_parse_stream_mixed_text_and_tool() {
+        let mut tool_states = HashMap::new();
+
+        // Text delta first
+        let text_chunk = r#"event: content_block_delta
+data: {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "I'll check the weather"}}
+
+"#;
+        let result = parse_anthropic_sse_chunk_with_tools(text_chunk, &mut tool_states).unwrap();
+        assert!(matches!(result, Some(StreamChunk::Text(t)) if t == "I'll check the weather"));
+
+        // Then tool use
+        let tool_start = r#"event: content_block_start
+data: {"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "id": "toolu_01XYZ", "name": "weather", "input": {}}}
+
+"#;
+        let result = parse_anthropic_sse_chunk_with_tools(tool_start, &mut tool_states).unwrap();
+        assert!(
+            matches!(result, Some(StreamChunk::ToolUseStart { name, .. }) if name == "weather")
+        );
+    }
+
+    #[test]
+    fn test_parse_stream_ignores_message_start() {
+        let chunk = r#"event: message_start
+data: {"type": "message_start", "message": {"id": "msg_123", "type": "message", "role": "assistant"}}
+
+"#;
+        let mut tool_states = HashMap::new();
+        let result = parse_anthropic_sse_chunk_with_tools(chunk, &mut tool_states).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_stream_ignores_ping() {
+        let chunk = r#"event: ping
+data: {"type": "ping"}
+
+"#;
+        let mut tool_states = HashMap::new();
+        let result = parse_anthropic_sse_chunk_with_tools(chunk, &mut tool_states).unwrap();
+        assert!(result.is_none());
+    }
 }
