@@ -26,7 +26,9 @@ impl MemoryProvider for SlidingWindowMemory {
         limit: Option<usize>,
     ) -> Result<Vec<ChatMessage>, LLMError> {
         let limit = limit.unwrap_or(self.messages.len());
-        Ok(self.recent_messages(limit))
+        let mut messages = self.recent_messages(limit);
+        messages.retain(|msg| !msg.has_audio());
+        Ok(messages)
     }
 
     async fn clear(&mut self) -> Result<(), LLMError> {
@@ -52,5 +54,25 @@ impl MemoryProvider for SlidingWindowMemory {
 
     fn replace_with_summary(&mut self, summary: String) {
         SlidingWindowMemory::replace_with_summary(self, summary);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::MemoryProvider;
+
+    #[tokio::test]
+    async fn recall_filters_audio_messages() {
+        let mut memory = SlidingWindowMemory::new(10);
+        let audio = ChatMessage::user().audio(vec![1]).build();
+        let text = ChatMessage::user().content("hi").build();
+        memory.remember(&audio).await.expect("remember audio");
+        memory.remember(&text).await.expect("remember text");
+
+        let recalled = memory.recall("", None).await.expect("recall");
+        assert_eq!(recalled.len(), 1);
+        assert_eq!(recalled[0].content, "hi");
+        assert!(!recalled[0].has_audio());
     }
 }

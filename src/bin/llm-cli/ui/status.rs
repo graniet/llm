@@ -280,7 +280,7 @@ mod tests {
     fn pulse_intensity_range() {
         for frame in 0..100 {
             let intensity = pulse_intensity(frame);
-            assert!(intensity >= 0.0 && intensity <= 1.0);
+            assert!((0.0..=1.0).contains(&intensity));
         }
     }
 

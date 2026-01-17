@@ -1,4 +1,4 @@
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span, Text};
 
 use crate::conversation::{
@@ -16,12 +16,22 @@ pub(super) fn render_message_text(
     theme: &Theme,
     collapsed: bool,
 ) -> Text<'static> {
-    match (&message.role, &message.kind) {
+    // Check if this is a dialogue message with participant info
+    let participant_header = build_participant_header(message);
+
+    let mut rendered = match (&message.role, &message.kind) {
         (MessageRole::User, MessageKind::Text(content)) => {
             render_bordered_message(content, theme.user_border, theme.user_bg, theme)
         }
         (MessageRole::Assistant, MessageKind::Text(content)) => {
-            render_bordered_message(content, theme.assistant_border, theme.assistant_bg, theme)
+            // For dialogue messages, use participant color for border
+            if let Some(color) = message.metadata.participant_color {
+                let (r, g, b) = color.rgb();
+                let border_style = Style::default().fg(Color::Rgb(r, g, b));
+                render_bordered_message(content, border_style, theme.assistant_bg, theme)
+            } else {
+                render_bordered_message(content, theme.assistant_border, theme.assistant_bg, theme)
+            }
         }
         (MessageRole::Tool, MessageKind::Text(content)) => {
             render_bordered_message(content, theme.tool_border, theme.tool_bg, theme)
@@ -32,7 +42,34 @@ pub(super) fn render_message_text(
         (_, MessageKind::ToolCall(invocation)) => render_tool_call(invocation, theme),
         (_, MessageKind::ToolResult(result)) => render_tool_result(result, theme, collapsed),
         (_, MessageKind::Text(content)) => render_markdown(content),
+    };
+
+    // Prepend participant header if in dialogue mode
+    if let Some(header) = participant_header {
+        let mut lines = vec![header];
+        lines.extend(rendered.lines);
+        rendered = Text::from(lines);
     }
+
+    rendered
+}
+
+/// Builds a participant header line if this message is part of a dialogue.
+fn build_participant_header(message: &ConversationMessage) -> Option<Line<'static>> {
+    let name = message.metadata.participant_name.as_ref()?;
+    let color = message.metadata.participant_color?;
+    let (r, g, b) = color.rgb();
+
+    Some(Line::from(vec![
+        Span::styled(
+            format!("{BORDER_CHAR} "),
+            Style::default().fg(Color::Rgb(r, g, b)),
+        ),
+        Span::styled(
+            format!("[{}]", name),
+            Style::default().fg(Color::Rgb(r, g, b)),
+        ),
+    ]))
 }
 
 /// Renders a message with a colored left border

@@ -116,8 +116,28 @@ fn handle_done(
     if controller.state.active_conversation_id() != Some(conv_id) {
         return false;
     }
-    controller.set_status(AppStatus::Idle);
     controller.finish_stream();
+
+    // Check if we're in dialogue mode and should continue to next turn
+    let should_continue = if controller.is_dialogue_active() {
+        if let Some(ref mut dialogue) = controller.state.dialogue_controller {
+            dialogue.advance_turn();
+            // Auto-continue dialogue to next participant
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if should_continue {
+        // Start the next participant's turn automatically
+        controller.continue_dialogue();
+    } else {
+        controller.set_status(AppStatus::Idle);
+    }
+
     true
 }
 

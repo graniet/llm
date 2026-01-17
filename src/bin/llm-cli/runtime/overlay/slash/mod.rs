@@ -12,6 +12,7 @@ pub enum SlashCategory {
     Context,
     Skills,
     Tools,
+    Dialogue,
     Help,
 }
 
@@ -25,6 +26,7 @@ impl SlashCategory {
             SlashCategory::Context => "context",
             SlashCategory::Skills => "skills",
             SlashCategory::Tools => "tools",
+            SlashCategory::Dialogue => "dialogue",
             SlashCategory::Help => "help",
         }
     }
@@ -56,6 +58,12 @@ pub enum SlashCommandId {
     ToolAdd,
     ToolList,
     ToolRemove,
+    // Dialogue commands
+    Multi,
+    Invite,
+    Kick,
+    Stop,
+    Continue,
     Help,
     Keys,
 }
@@ -87,6 +95,11 @@ impl SlashCommandId {
             "tool-add" | "tooladd" => Some(Self::ToolAdd),
             "tool-list" | "toollist" | "tools" => Some(Self::ToolList),
             "tool-remove" | "toolremove" => Some(Self::ToolRemove),
+            "multi" | "dialogue" => Some(Self::Multi),
+            "invite" => Some(Self::Invite),
+            "kick" => Some(Self::Kick),
+            "stop" => Some(Self::Stop),
+            "continue" | "next" => Some(Self::Continue),
             "help" => Some(Self::Help),
             "keys" => Some(Self::Keys),
             _ => None,

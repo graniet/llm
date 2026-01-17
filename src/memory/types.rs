@@ -43,6 +43,8 @@ pub enum MessageCondition {
     AnyOf(Vec<MessageCondition>),
     /// Trigger if message content matches regex
     Regex(String),
+    /// Trigger if message contains audio data
+    HasAudio,
 }
 
 impl MessageCondition {
@@ -63,7 +65,35 @@ impl MessageCondition {
             MessageCondition::Regex(regex) => Regex::new(regex)
                 .map(|re| re.is_match(&event.msg.content))
                 .unwrap_or(false),
+            MessageCondition::HasAudio => event.msg.has_audio(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chat::ChatMessage;
+
+    fn event_for(msg: ChatMessage) -> MessageEvent {
+        MessageEvent {
+            role: "user".to_string(),
+            msg,
+        }
+    }
+
+    #[test]
+    fn has_audio_condition_matches_audio_message() {
+        let msg = ChatMessage::user().audio(vec![1]).build();
+        let event = event_for(msg);
+        assert!(MessageCondition::HasAudio.matches(&event));
+    }
+
+    #[test]
+    fn has_audio_condition_rejects_text_message() {
+        let msg = ChatMessage::user().content("hello").build();
+        let event = event_for(msg);
+        assert!(!MessageCondition::HasAudio.matches(&event));
     }
 }
 

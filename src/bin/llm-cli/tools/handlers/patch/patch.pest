@@ -1,0 +1,26 @@
+// Patch grammar (Codex-compatible)
+// Based on tool_apply_patch.lark
+
+patch = { SOI ~ begin_patch ~ hunk+ ~ end_patch ~ EOI }
+
+begin_patch = { "*** Begin Patch" ~ NEWLINE }
+end_patch = { "*** End Patch" ~ NEWLINE? }
+
+hunk = { add_hunk | delete_hunk | update_hunk }
+
+add_hunk = { "*** Add File: " ~ filename ~ NEWLINE ~ add_line+ }
+delete_hunk = { "*** Delete File: " ~ filename ~ NEWLINE }
+update_hunk = { "*** Update File: " ~ filename ~ NEWLINE ~ change_move? ~ change? }
+
+filename = { (!NEWLINE ~ ANY)+ }
+add_line = { "+" ~ line_content ~ NEWLINE }
+
+change_move = { "*** Move to: " ~ filename ~ NEWLINE }
+change = { (change_context | change_line)+ ~ eof_line? }
+change_context = { "@@" ~ (" " ~ line_content)? ~ NEWLINE }
+change_line = { ("+"|"-"|" ") ~ line_content ~ NEWLINE }
+eof_line = { "*** End of File" ~ NEWLINE }
+
+line_content = { (!NEWLINE ~ ANY)* }
+
+WHITESPACE = _{ " " | "\t" }

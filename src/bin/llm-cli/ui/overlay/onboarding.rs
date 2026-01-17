@@ -1,6 +1,7 @@
 use ratatui::layout::Rect;
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Text};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::runtime::{OnboardingState, OnboardingStep};
@@ -13,11 +14,19 @@ pub fn render_onboarding(
     state: &OnboardingState,
     theme: &Theme,
 ) {
+    // Clear the area first
+    frame.render_widget(Clear, area);
+
     let title = step_title(state.step);
     let lines = build_lines(state, theme);
     let paragraph = Paragraph::new(Text::from(lines))
-        .block(Block::default().borders(Borders::ALL).title(title))
-        .style(theme.assistant)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(theme.border_focused)
+                .style(Style::default().bg(Color::Black))
+                .title(format!(" {} ", title)),
+        )
         .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
 }

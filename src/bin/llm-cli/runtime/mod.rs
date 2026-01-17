@@ -3,7 +3,7 @@ mod collapsible;
 mod context;
 pub mod controller;
 mod events;
-mod overlay;
+pub mod overlay;
 mod paste;
 mod runner;
 mod scroll;
@@ -20,8 +20,9 @@ pub use context::{
 };
 pub use events::{AppEvent, InputEvent, StreamEvent, ToolApprovalRequest, ToolEvent};
 pub use overlay::{
-    BacktrackOverlayState, ConfirmState, DiffViewerState, OnboardingProvider, OnboardingState,
-    OnboardingStep, OverlayState, PagerState, PickerItem, PickerState, SearchState, SlashCommand,
+    BacktrackOverlayState, ConfirmState, DialogueBuilderResult, DialogueBuilderState,
+    DialogueBuilderStep, DiffViewerState, OnboardingProvider, OnboardingState, OnboardingStep,
+    OverlayState, PagerState, ParticipantField, PickerItem, PickerState, SearchState, SlashCommand,
     SlashCommandId, SlashCommandState, ToolApprovalState, ToolBuilderResult, ToolBuilderState,
     ToolBuilderStep, UserToolDraft,
 };

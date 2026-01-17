@@ -16,6 +16,7 @@ pub struct ChatWithMemoryConfig {
     role: Option<String>,
     role_triggers: Vec<(String, MessageCondition)>,
     max_cycles: Option<u32>,
+    stt_provider: Option<Arc<dyn LLMProvider>>,
 }
 
 impl ChatWithMemoryConfig {
@@ -29,6 +30,7 @@ impl ChatWithMemoryConfig {
             role: None,
             role_triggers: Vec::new(),
             max_cycles: None,
+            stt_provider: None,
         }
     }
 
@@ -46,6 +48,11 @@ impl ChatWithMemoryConfig {
         self.max_cycles = Some(max);
         self
     }
+
+    pub fn stt_provider(mut self, provider: Option<Arc<dyn LLMProvider>>) -> Self {
+        self.stt_provider = provider;
+        self
+    }
 }
 
 /// Adds transparent long-term memory to any `ChatProvider`.
@@ -56,6 +63,7 @@ pub struct ChatWithMemory {
     pub(super) role_triggers: Vec<(String, MessageCondition)>,
     pub(super) max_cycles: Option<u32>,
     pub(super) cycle_counter: Arc<std::sync::atomic::AtomicU32>,
+    pub(super) stt_provider: Option<Arc<dyn LLMProvider>>,
 }
 
 impl ChatWithMemory {
@@ -87,6 +95,7 @@ impl ChatWithMemory {
             role_triggers: config.role_triggers,
             max_cycles: config.max_cycles,
             cycle_counter: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            stt_provider: config.stt_provider,
         }
     }
 

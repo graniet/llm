@@ -20,6 +20,14 @@ impl AppController {
         let Some((conv_id, user_message)) = self.build_user_message(content) else {
             return false;
         };
+
+        // In dialogue mode, add user message then continue with next participant
+        if self.is_dialogue_active() {
+            self.append_user_message(user_message, conv_id);
+            self.maybe_auto_compact();
+            return self.continue_dialogue();
+        }
+
         let assistant_id = self.queue_user_message(conv_id, user_message);
         self.start_stream_for(conv_id, assistant_id).await
     }
@@ -139,7 +147,7 @@ impl AppController {
             .with_tools(self.tool_registry.function_builders());
         overrides.model = conversation.model.clone().or(overrides.model);
         overrides.system = conversation.system_prompt.clone().or(overrides.system);
-        let factory = ProviderFactory::new(&self.state.config, &self.state.registry);
+        let factory = ProviderFactory::new(&self.state.config, &self.state.provider_registry);
         let handle = factory.build(&selection, overrides).ok()?;
         self.state
             .provider_cache

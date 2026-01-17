@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use llm::ToolCall;
 
 use super::id::MessageId;
+use crate::dialogue::{ParticipantColor, ParticipantId};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 pub enum MessageRole {
@@ -93,6 +94,15 @@ pub struct MessageMetadata {
     pub model: Option<String>,
     pub latency_ms: Option<u128>,
     pub tokens: Option<llm::chat::Usage>,
+    /// Participant ID for multi-LLM dialogues.
+    #[serde(default)]
+    pub participant_id: Option<ParticipantId>,
+    /// Participant display name for multi-LLM dialogues.
+    #[serde(default)]
+    pub participant_name: Option<String>,
+    /// Participant color for multi-LLM dialogues.
+    #[serde(default)]
+    pub participant_color: Option<ParticipantColor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

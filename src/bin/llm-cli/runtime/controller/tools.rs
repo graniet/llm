@@ -67,7 +67,7 @@ impl AppController {
 
         // Reload tools in registry
         self.tool_registry.load_user_tools(&path);
-        self.push_notice(&format!("Tool '{}' created successfully!", tool_name));
+        self.push_notice(format!("Tool '{}' created successfully!", tool_name));
         true
     }
 
@@ -95,7 +95,7 @@ impl AppController {
             // Reload registry (will remove the tool)
             self.tool_registry = crate::tools::ToolRegistry::from_config(&self.state.config.tools);
             self.tool_registry.load_user_tools(&path);
-            self.push_notice(&format!("Tool '{}' removed", name));
+            self.push_notice(format!("Tool '{}' removed", name));
             true
         } else {
             self.set_status(crate::runtime::AppStatus::Error(format!(

@@ -1,5 +1,6 @@
 mod backtrack;
 mod confirm;
+mod dialogue_builder;
 mod diff;
 mod help;
 mod onboarding;
@@ -13,6 +14,7 @@ mod tool_picker;
 
 use crossterm::event::KeyEvent;
 
+use crate::runtime::overlay::DialogueBuilderState;
 use crate::runtime::{
     BacktrackOverlayState, DiffViewerState, OnboardingState, PagerState, PickerState, SearchState,
     ToolBuilderState,
@@ -74,4 +76,11 @@ pub(super) fn handle_tool_builder(state: &mut ToolBuilderState, key: KeyEvent) -
 
 pub(super) fn handle_tool_picker(state: &mut PickerState, key: KeyEvent) -> OverlayResult {
     tool_picker::handle_tool_picker(state, key)
+}
+
+pub(super) fn handle_dialogue_builder(
+    state: &mut DialogueBuilderState,
+    key: KeyEvent,
+) -> OverlayResult {
+    dialogue_builder::handle_dialogue_builder(state, key)
 }

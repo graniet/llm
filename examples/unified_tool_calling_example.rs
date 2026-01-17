@@ -42,9 +42,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Run the requested scenario
     match scenario {
-        "simple" => run_simple_scenario(&llm).await?,
-        "multi" => run_multi_turn_scenario(&llm).await?,
-        "choice" => run_tool_choice_scenario(&llm).await?,
+        "simple" => run_simple_scenario(llm.as_ref()).await?,
+        "multi" => run_multi_turn_scenario(llm.as_ref()).await?,
+        "choice" => run_tool_choice_scenario(llm.as_ref()).await?,
         _ => {
             println!("Unknown scenario: {scenario}. Available scenarios: simple, multi, choice");
             println!("Example: cargo run --example unified_tool_calling_example -- openai multi");
@@ -140,7 +140,7 @@ fn create_llm(provider_name: &str) -> Result<Box<dyn LLMProvider>, Box<dyn Error
 }
 
 /// Run a simple tool calling scenario - single query with tool use
-async fn run_simple_scenario(llm: &Box<dyn LLMProvider>) -> Result<(), Box<dyn Error>> {
+async fn run_simple_scenario(llm: &dyn LLMProvider) -> Result<(), Box<dyn Error>> {
     println!("SCENARIO: Simple Tool Calling");
     println!("This demonstrates a single query that triggers tool use\n");
 
@@ -211,7 +211,7 @@ async fn run_simple_scenario(llm: &Box<dyn LLMProvider>) -> Result<(), Box<dyn E
 }
 
 /// Run a multi-turn conversation scenario
-async fn run_multi_turn_scenario(llm: &Box<dyn LLMProvider>) -> Result<(), Box<dyn Error>> {
+async fn run_multi_turn_scenario(llm: &dyn LLMProvider) -> Result<(), Box<dyn Error>> {
     println!("SCENARIO: Multi-turn Conversation with Tool Calling");
     println!("This demonstrates maintaining context across multiple turns with tool use\n");
 
@@ -247,7 +247,7 @@ async fn run_multi_turn_scenario(llm: &Box<dyn LLMProvider>) -> Result<(), Box<d
 }
 
 /// Run a tool choice demonstration scenario
-async fn run_tool_choice_scenario(llm: &Box<dyn LLMProvider>) -> Result<(), Box<dyn Error>> {
+async fn run_tool_choice_scenario(llm: &dyn LLMProvider) -> Result<(), Box<dyn Error>> {
     println!("SCENARIO: Tool Choice Options");
     println!("This demonstrates controlling how the model uses tools\n");
 
@@ -271,7 +271,7 @@ async fn run_tool_choice_scenario(llm: &Box<dyn LLMProvider>) -> Result<(), Box<
 
 /// Helper function to test different tool choice settings
 async fn test_tool_choice(
-    llm: &Box<dyn LLMProvider>,
+    llm: &dyn LLMProvider,
     tool_choice: ToolChoice,
     query: &str,
 ) -> Result<(), Box<dyn Error>> {
@@ -328,7 +328,7 @@ async fn test_tool_choice(
 
 /// Helper function for multi-turn conversation with tool handling
 async fn await_tool_response(
-    llm: &Box<dyn LLMProvider>,
+    llm: &dyn LLMProvider,
     conversation: &mut Vec<ChatMessage>,
     user_query: &str,
 ) -> Result<(), Box<dyn Error>> {

@@ -123,7 +123,7 @@ fn create_mock_response(chunks: Vec<Result<Bytes, reqwest::Error>>) -> reqwest::
     let frame_stream = futures::stream::iter(
         chunks
             .into_iter()
-            .map(|chunk| chunk.map(|bytes| hyper::body::Frame::data(bytes))),
+            .map(|chunk| chunk.map(hyper::body::Frame::data)),
     );
 
     let body = StreamBody::new(frame_stream);

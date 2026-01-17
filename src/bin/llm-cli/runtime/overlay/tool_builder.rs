@@ -138,7 +138,8 @@ impl ToolBuilderState {
                         "number" | "num" | "n" | "int" | "integer" => "number".to_string(),
                         "boolean" | "bool" | "b" => "boolean".to_string(),
                         _ => {
-                            self.error = Some("Type must be string, number, or boolean".to_string());
+                            self.error =
+                                Some("Type must be string, number, or boolean".to_string());
                             return ToolBuilderResult::Continue;
                         }
                     }
@@ -254,7 +255,7 @@ fn is_valid_identifier(s: &str) -> bool {
     !s.is_empty()
         && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        && s.chars().next().map_or(false, |c| c.is_ascii_alphabetic())
+        && s.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
 }
 
 #[cfg(test)]

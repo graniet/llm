@@ -404,6 +404,7 @@ impl Anthropic {
                         tool_result_id: None,
                         tool_output: None,
                     }],
+                    MessageType::Audio(_) => vec![],
                     MessageType::ToolUse(calls) => calls
                         .iter()
                         .map(|c| MessageContent {
@@ -669,6 +670,8 @@ impl Anthropic {
     }
 }
 
+const AUDIO_UNSUPPORTED: &str = "Audio messages are not supported by Anthropic chat";
+
 #[async_trait]
 impl ChatProvider for Anthropic {
     /// Sends a chat request to Anthropic's API.
@@ -686,6 +689,7 @@ impl ChatProvider for Anthropic {
         messages: &[ChatMessage],
         tools: Option<&[Tool]>,
     ) -> Result<Box<dyn ChatResponse>, LLMError> {
+        crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
         if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Anthropic API key".to_string()));
         }
@@ -777,6 +781,7 @@ impl ChatProvider for Anthropic {
         messages: &[ChatMessage],
     ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send>>, LLMError>
     {
+        crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
         if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Anthropic API key".to_string()));
         }

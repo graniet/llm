@@ -485,6 +485,8 @@ impl Ollama {
     }
 }
 
+const AUDIO_UNSUPPORTED: &str = "Audio messages are not supported by Ollama chat";
+
 #[async_trait]
 impl ChatProvider for Ollama {
     async fn chat_with_tools(
@@ -492,6 +494,7 @@ impl ChatProvider for Ollama {
         messages: &[ChatMessage],
         tools: Option<&[Tool]>,
     ) -> Result<Box<dyn ChatResponse>, LLMError> {
+        crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
         if self.config.base_url.is_empty() {
             return Err(LLMError::InvalidRequest("Missing base_url".to_string()));
         }
@@ -526,6 +529,7 @@ impl ChatProvider for Ollama {
         &self,
         messages: &[ChatMessage],
     ) -> Result<Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send>>, LLMError> {
+        crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
         let req_body = self.make_chat_request(messages, None, true);
 
         let url = format!("{}/api/chat", self.config.base_url);

@@ -24,6 +24,8 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 
+const AUDIO_UNSUPPORTED: &str = "Audio messages are not supported for this provider";
+
 /// Configuration for OpenAI-compatible providers.
 #[derive(Debug)]
 pub struct OpenAICompatibleProviderConfig {
@@ -567,6 +569,7 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
         messages: &[ChatMessage],
         tools: Option<&[Tool]>,
     ) -> Result<Box<dyn ChatResponse>, LLMError> {
+        crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
         if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError(format!(
                 "Missing {} API key",
@@ -697,6 +700,7 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
         std::pin::Pin<Box<dyn Stream<Item = Result<StreamResponse, LLMError>> + Send>>,
         LLMError,
     > {
+        crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
         if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError(format!(
                 "Missing {} API key",
@@ -790,6 +794,7 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
         tools: Option<&[Tool]>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatStreamChunk, LLMError>> + Send>>, LLMError>
     {
+        crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
         if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError(format!(
                 "Missing {} API key",
@@ -1111,6 +1116,7 @@ pub fn chat_message_to_openai_message(chat_msg: ChatMessage) -> OpenAIChatMessag
             MessageType::Text => Some(Right(chat_msg.content.clone())),
             MessageType::Image(_) => unreachable!(),
             MessageType::Pdf(_) => unimplemented!(),
+            MessageType::Audio(_) => None,
             MessageType::ImageURL(url) => Some(Left(vec![OpenAIMessageContent {
                 message_type: Some("image_url"),
                 text: None,
@@ -1567,7 +1573,7 @@ mod tests {
 
         // Should have ToolUseStart and ToolUseInputDelta
         assert!(
-            results.len() >= 1,
+            !results.is_empty(),
             "Expected at least 1 result, got {:?}",
             results
         );

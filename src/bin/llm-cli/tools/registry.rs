@@ -1,15 +1,19 @@
-use serde_json::Value;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
+
+use serde_json::Value;
 
 use llm::builder::FunctionBuilder;
 
 use crate::config::ToolsConfig;
 
-use super::builtin::builtin_tools;
+use super::builtin::{builtin_tools, builtin_tools_with_pty};
 use super::context::ToolContext;
 use super::definition::ToolDefinition;
+use super::diff_tracker::DiffTracker;
 use super::error::ToolError;
+use super::pty::PtySessionManager;
 use super::user_tools::UserToolsConfig;
 
 #[derive(Clone)]
@@ -18,8 +22,22 @@ pub struct ToolRegistry {
 }
 
 impl ToolRegistry {
+    /// Create a registry with basic tools only (no PTY).
     pub fn from_config(config: &ToolsConfig) -> Self {
         let mut tools = builtin_tools();
+        if !config.enabled.is_empty() {
+            tools.retain(|tool| config.enabled.iter().any(|name| name == tool.name));
+        }
+        Self { tools }
+    }
+
+    /// Create a registry with all tools including PTY-based shell tools and diff tracking.
+    pub fn from_config_with_pty(
+        config: &ToolsConfig,
+        pty_manager: Arc<PtySessionManager>,
+        diff_tracker: Arc<DiffTracker>,
+    ) -> Self {
+        let mut tools = builtin_tools_with_pty(pty_manager, diff_tracker);
         if !config.enabled.is_empty() {
             tools.retain(|tool| config.enabled.iter().any(|name| name == tool.name));
         }

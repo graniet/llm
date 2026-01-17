@@ -3,6 +3,7 @@ mod backtrack;
 mod collapsible;
 mod config;
 mod context;
+mod dialogue;
 mod diff;
 mod extras;
 mod focus;

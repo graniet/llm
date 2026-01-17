@@ -604,6 +604,8 @@ impl Google {
     }
 }
 
+const AUDIO_UNSUPPORTED: &str = "Audio messages are not supported by Google chat";
+
 #[async_trait]
 impl ChatProvider for Google {
     /// Sends a chat request to Google's Gemini API.
@@ -616,6 +618,7 @@ impl ChatProvider for Google {
     ///
     /// The model's response text or an error
     async fn chat(&self, messages: &[ChatMessage]) -> Result<Box<dyn ChatResponse>, LLMError> {
+        crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
         if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Google API key".to_string()));
         }
@@ -658,6 +661,7 @@ impl ChatProvider for Google {
                             data: BASE64.encode(raw_bytes),
                         })]
                     }
+                    MessageType::Audio(_) => vec![],
                     MessageType::ToolUse(calls) => calls
                         .iter()
                         .map(|call| {
@@ -784,6 +788,7 @@ impl ChatProvider for Google {
         messages: &[ChatMessage],
         tools: Option<&[Tool]>,
     ) -> Result<Box<dyn ChatResponse>, LLMError> {
+        crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
         if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Google API key".to_string()));
         }
@@ -826,6 +831,7 @@ impl ChatProvider for Google {
                             data: BASE64.encode(raw_bytes),
                         })]
                     }
+                    MessageType::Audio(_) => vec![],
                     MessageType::ToolUse(calls) => calls
                         .iter()
                         .map(|call| {
@@ -994,6 +1000,7 @@ impl ChatProvider for Google {
         std::pin::Pin<Box<dyn Stream<Item = Result<crate::chat::StreamResponse, LLMError>> + Send>>,
         LLMError,
     > {
+        crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
         if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing Google API key".to_string()));
         }

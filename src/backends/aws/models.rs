@@ -760,135 +760,127 @@ impl ModelCapabilityOverride {
 mod tests {
     use super::*;
 
-    #[cfg(test)]
-    mod tests {
-        use super::*;
+    #[test]
+    fn test_model_id() {
+        let model = BedrockModel::Direct(DirectModel::ClaudeSonnet4);
+        assert_eq!(model.model_id(), "us.anthropic.claude-sonnet-4-0-v1:0");
 
-        #[test]
-        fn test_model_id() {
-            let model = BedrockModel::Direct(DirectModel::ClaudeSonnet4);
-            assert_eq!(model.model_id(), "us.anthropic.claude-sonnet-4-0-v1:0");
+        // Test cross-region inference profile
+        let model = BedrockModel::eu(CrossRegionModel::ClaudeSonnet4);
+        assert!(model.model_id().starts_with("arn:aws:bedrock:eu-central-1"));
+        assert!(model.model_id().contains("claude-sonnet-4-20250514"));
 
-            // Test cross-region inference profile
-            let model = BedrockModel::eu(CrossRegionModel::ClaudeSonnet4);
-            assert!(model.model_id().starts_with("arn:aws:bedrock:eu-central-1"));
-            assert!(model.model_id().contains("claude-sonnet-4-20250514"));
+        let model =
+            BedrockModel::cross_region("eu-central-1", CrossRegionModel::MistralPixtralLarge);
+        assert!(model.model_id().contains("pixtral-large"));
 
-            let model =
-                BedrockModel::cross_region("eu-central-1", CrossRegionModel::MistralPixtralLarge);
-            assert!(model.model_id().contains("pixtral-large"));
+        let model = BedrockModel::eu(CrossRegionModel::CohereEmbedV4);
+        assert!(model.model_id().contains("embed-v4"));
+    }
 
-            let model = BedrockModel::eu(CrossRegionModel::CohereEmbedV4);
-            assert!(model.model_id().contains("embed-v4"));
-        }
+    #[test]
+    fn test_cross_region_convenience_methods() {
+        // Test EU convenience method
+        let model = BedrockModel::eu(CrossRegionModel::ClaudeSonnet4);
+        assert!(
+            matches!(model, BedrockModel::CrossRegion { region, .. } if region == "eu-central-1")
+        );
 
-        #[test]
-        fn test_cross_region_convenience_methods() {
-            // Test EU convenience method
-            let model = BedrockModel::eu(CrossRegionModel::ClaudeSonnet4);
-            assert!(
-                matches!(model, BedrockModel::CrossRegion { region, .. } if region == "eu-central-1")
-            );
+        // Test US convenience method
+        let model = BedrockModel::us(CrossRegionModel::ClaudeSonnet4);
+        assert!(matches!(model, BedrockModel::CrossRegion { region, .. } if region == "us-east-1"));
 
-            // Test US convenience method
-            let model = BedrockModel::us(CrossRegionModel::ClaudeSonnet4);
-            assert!(
-                matches!(model, BedrockModel::CrossRegion { region, .. } if region == "us-east-1")
-            );
+        // Test custom region
+        let model = BedrockModel::cross_region("ap-southeast-1", CrossRegionModel::ClaudeSonnet4);
+        assert!(
+            matches!(model, BedrockModel::CrossRegion { region, .. } if region == "ap-southeast-1")
+        );
+    }
 
-            // Test custom region
-            let model =
-                BedrockModel::cross_region("ap-southeast-1", CrossRegionModel::ClaudeSonnet4);
-            assert!(
-                matches!(model, BedrockModel::CrossRegion { region, .. } if region == "ap-southeast-1")
-            );
-        }
+    #[test]
+    fn test_from_id() {
+        // Test standard model IDs
+        let model = BedrockModel::from_id("us.anthropic.claude-sonnet-4-0-v1:0");
+        assert!(matches!(
+            model,
+            BedrockModel::Direct(DirectModel::ClaudeSonnet4)
+        ));
 
-        #[test]
-        fn test_from_id() {
-            // Test standard model IDs
-            let model = BedrockModel::from_id("us.anthropic.claude-sonnet-4-0-v1:0");
-            assert!(matches!(
-                model,
-                BedrockModel::Direct(DirectModel::ClaudeSonnet4)
-            ));
-
-            // Test ARN parsing
-            let model = BedrockModel::from_id(
+        // Test ARN parsing
+        let model = BedrockModel::from_id(
             "arn:aws:bedrock:eu-central-1:876164100382:inference-profile/eu.anthropic.claude-sonnet-4-20250514-v1:0"
         );
-            assert!(matches!(model, BedrockModel::CrossRegion { .. }));
+        assert!(matches!(model, BedrockModel::CrossRegion { .. }));
 
-            // Test custom model
-            let model = BedrockModel::from_id("custom-model-id");
-            assert!(matches!(model, BedrockModel::Custom(_)));
-        }
+        // Test custom model
+        let model = BedrockModel::from_id("custom-model-id");
+        assert!(matches!(model, BedrockModel::Custom(_)));
+    }
 
-        #[test]
-        fn test_is_cross_region_profile() {
-            let direct = BedrockModel::Direct(DirectModel::ClaudeSonnet4);
-            assert!(!direct.is_cross_region_profile());
+    #[test]
+    fn test_is_cross_region_profile() {
+        let direct = BedrockModel::Direct(DirectModel::ClaudeSonnet4);
+        assert!(!direct.is_cross_region_profile());
 
-            let cross_region = BedrockModel::eu(CrossRegionModel::ClaudeSonnet4);
-            assert!(cross_region.is_cross_region_profile());
+        let cross_region = BedrockModel::eu(CrossRegionModel::ClaudeSonnet4);
+        assert!(cross_region.is_cross_region_profile());
 
-            let pixtral = BedrockModel::eu(CrossRegionModel::MistralPixtralLarge);
-            assert!(pixtral.is_cross_region_profile());
-        }
+        let pixtral = BedrockModel::eu(CrossRegionModel::MistralPixtralLarge);
+        assert!(pixtral.is_cross_region_profile());
+    }
 
-        #[test]
-        fn test_model_capabilities() {
-            let claude = BedrockModel::Direct(DirectModel::ClaudeSonnet4);
-            assert!(claude.supports(ModelCapability::Chat));
-            assert!(claude.supports(ModelCapability::Vision));
-            assert!(claude.supports(ModelCapability::ToolUse));
-            assert!(!claude.supports(ModelCapability::Embeddings));
+    #[test]
+    fn test_model_capabilities() {
+        let claude = BedrockModel::Direct(DirectModel::ClaudeSonnet4);
+        assert!(claude.supports(ModelCapability::Chat));
+        assert!(claude.supports(ModelCapability::Vision));
+        assert!(claude.supports(ModelCapability::ToolUse));
+        assert!(!claude.supports(ModelCapability::Embeddings));
 
-            // Test EU cross-region models
-            let claude_eu = BedrockModel::eu(CrossRegionModel::ClaudeSonnet4);
-            assert!(claude_eu.supports(ModelCapability::Chat));
-            assert!(claude_eu.supports(ModelCapability::Vision));
-            assert!(claude_eu.supports(ModelCapability::ToolUse));
+        // Test EU cross-region models
+        let claude_eu = BedrockModel::eu(CrossRegionModel::ClaudeSonnet4);
+        assert!(claude_eu.supports(ModelCapability::Chat));
+        assert!(claude_eu.supports(ModelCapability::Vision));
+        assert!(claude_eu.supports(ModelCapability::ToolUse));
 
-            let pixtral = BedrockModel::eu(CrossRegionModel::MistralPixtralLarge);
-            assert!(pixtral.supports(ModelCapability::Chat));
-            assert!(pixtral.supports(ModelCapability::Vision));
-            assert!(pixtral.supports(ModelCapability::ToolUse));
+        let pixtral = BedrockModel::eu(CrossRegionModel::MistralPixtralLarge);
+        assert!(pixtral.supports(ModelCapability::Chat));
+        assert!(pixtral.supports(ModelCapability::Vision));
+        assert!(pixtral.supports(ModelCapability::ToolUse));
 
-            let titan_embed = BedrockModel::Direct(DirectModel::TitanEmbedV2);
-            assert!(titan_embed.supports(ModelCapability::Embeddings));
-            assert!(!titan_embed.supports(ModelCapability::Chat));
+        let titan_embed = BedrockModel::Direct(DirectModel::TitanEmbedV2);
+        assert!(titan_embed.supports(ModelCapability::Embeddings));
+        assert!(!titan_embed.supports(ModelCapability::Chat));
 
-            let cohere_embed_eu = BedrockModel::eu(CrossRegionModel::CohereEmbedV4);
-            assert!(cohere_embed_eu.supports(ModelCapability::Embeddings));
-            assert!(!cohere_embed_eu.supports(ModelCapability::Chat));
-        }
+        let cohere_embed_eu = BedrockModel::eu(CrossRegionModel::CohereEmbedV4);
+        assert!(cohere_embed_eu.supports(ModelCapability::Embeddings));
+        assert!(!cohere_embed_eu.supports(ModelCapability::Chat));
+    }
 
-        #[test]
-        fn test_context_window() {
-            let claude = BedrockModel::Direct(DirectModel::ClaudeSonnet4);
-            assert_eq!(claude.context_window(), 200_000);
+    #[test]
+    fn test_context_window() {
+        let claude = BedrockModel::Direct(DirectModel::ClaudeSonnet4);
+        assert_eq!(claude.context_window(), 200_000);
 
-            let claude_eu = BedrockModel::eu(CrossRegionModel::ClaudeSonnet4);
-            assert_eq!(claude_eu.context_window(), 200_000);
+        let claude_eu = BedrockModel::eu(CrossRegionModel::ClaudeSonnet4);
+        assert_eq!(claude_eu.context_window(), 200_000);
 
-            let llama = BedrockModel::Direct(DirectModel::Llama32_90B);
-            assert_eq!(llama.context_window(), 128_000);
+        let llama = BedrockModel::Direct(DirectModel::Llama32_90B);
+        assert_eq!(llama.context_window(), 128_000);
 
-            let pixtral = BedrockModel::eu(CrossRegionModel::MistralPixtralLarge);
-            assert_eq!(pixtral.context_window(), 128_000);
-        }
+        let pixtral = BedrockModel::eu(CrossRegionModel::MistralPixtralLarge);
+        assert_eq!(pixtral.context_window(), 128_000);
+    }
 
-        #[test]
-        fn test_max_output_tokens() {
-            let claude = BedrockModel::Direct(DirectModel::ClaudeSonnet4);
-            assert_eq!(claude.max_output_tokens(), 8192);
+    #[test]
+    fn test_max_output_tokens() {
+        let claude = BedrockModel::Direct(DirectModel::ClaudeSonnet4);
+        assert_eq!(claude.max_output_tokens(), 8192);
 
-            let claude_eu = BedrockModel::eu(CrossRegionModel::ClaudeSonnet45);
-            assert_eq!(claude_eu.max_output_tokens(), 8192);
+        let claude_eu = BedrockModel::eu(CrossRegionModel::ClaudeSonnet45);
+        assert_eq!(claude_eu.max_output_tokens(), 8192);
 
-            let llama = BedrockModel::Direct(DirectModel::Llama32_3B);
-            assert_eq!(llama.max_output_tokens(), 2048);
-        }
+        let llama = BedrockModel::Direct(DirectModel::Llama32_3B);
+        assert_eq!(llama.max_output_tokens(), 2048);
     }
 }

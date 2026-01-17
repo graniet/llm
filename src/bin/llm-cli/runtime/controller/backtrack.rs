@@ -95,11 +95,9 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         let stream_manager = StreamManager::new(tx.clone());
         let tool_registry = ToolRegistry::from_config(&config.tools);
-        let tool_context = ToolContext {
-            allowed_paths: config.tools.allowed_paths.clone(),
-            timeout_ms: config.tools.timeout_ms,
-            working_dir: ".".to_string(),
-        };
+        let tool_context = ToolContext::new(".".to_string())
+            .with_allowed_paths(config.tools.allowed_paths.clone())
+            .with_timeout(config.tools.timeout_ms);
         let config_paths =
             ConfigPaths::resolve(Some(std::env::temp_dir().join("llm-test-config.toml"))).unwrap();
         let params = crate::runtime::controller::AppControllerParams {

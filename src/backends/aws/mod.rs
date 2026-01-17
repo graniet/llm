@@ -1081,6 +1081,8 @@ impl SpeechToTextProvider for BedrockBackend {
     }
 }
 
+const AUDIO_UNSUPPORTED: &str = "Audio messages are not supported by AWS Bedrock chat";
+
 #[async_trait]
 impl ChatProvider for BedrockBackend {
     async fn chat_with_tools(
@@ -1088,6 +1090,7 @@ impl ChatProvider for BedrockBackend {
         messages: &[LlmChatMessage],
         tools: Option<&[LlmTool]>,
     ) -> std::result::Result<Box<dyn crate::chat::ChatResponse>, crate::error::LLMError> {
+        crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
         let aws_messages: Vec<ChatMessage> = messages
             .iter()
             .map(|m| {

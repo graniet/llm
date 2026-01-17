@@ -31,7 +31,8 @@ impl EmbeddingProvider for ChatWithMemory {
 #[async_trait]
 impl SpeechToTextProvider for ChatWithMemory {
     async fn transcribe(&self, audio: Vec<u8>) -> Result<String, crate::error::LLMError> {
-        self.provider.transcribe(audio).await
+        let provider = self.stt_provider.as_ref().unwrap_or(&self.provider);
+        provider.transcribe(audio).await
     }
 }
 
