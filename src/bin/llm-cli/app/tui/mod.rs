@@ -9,7 +9,7 @@ use crate::runtime::{controller::AppController, init_terminal, restore_terminal,
 use crate::runtime::{AppState, StreamManager};
 use crate::skills::SkillCatalog;
 use crate::terminal::TerminalCapabilities;
-use crate::tools::{ToolContext, ToolRegistry};
+use crate::tools::{PtySessionManager, ToolContext, ToolRegistry};
 
 use launch::apply_launch_options;
 
@@ -74,16 +74,25 @@ struct ControllerBundle {
 fn build_controller(ctx: TuiContext) -> anyhow::Result<ControllerBundle> {
     let store =
         crate::persistence::JsonConversationStore::new(ctx.paths.data_dir.join("conversations"));
-    let mut tool_registry = ToolRegistry::from_config(&ctx.config.tools);
+
+    // Create PTY session manager for shell tools
+    let pty_manager = std::sync::Arc::new(PtySessionManager::new());
+
+    // Create diff tracker for rollback support
+    let diff_tracker = crate::tools::create_tracker();
+
+    // Create tool registry with PTY support and diff tracking
+    let mut tool_registry =
+        ToolRegistry::from_config_with_pty(&ctx.config.tools, pty_manager, diff_tracker);
     // Load user-defined tools from config
     tool_registry.load_user_tools(&ctx.paths.user_tools_file());
-    let tool_context = ToolContext {
-        allowed_paths: ctx.config.tools.allowed_paths.clone(),
-        timeout_ms: ctx.config.tools.timeout_ms,
-        working_dir: std::env::current_dir()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| ".".to_string()),
-    };
+
+    let working_dir = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| ".".to_string());
+    let tool_context = ToolContext::new(working_dir)
+        .with_allowed_paths(ctx.config.tools.allowed_paths.clone())
+        .with_timeout(ctx.config.tools.timeout_ms);
     let mut state = AppState::new(ctx.config, ctx.registry, store, ctx.terminal_caps);
     let skills_dir = ctx.paths.config_dir.join("skills");
     state.skills = SkillCatalog::load(&skills_dir)

@@ -41,7 +41,7 @@ impl AppController {
 fn build_providers(controller: &AppController) -> Vec<OnboardingProvider> {
     let mut providers: Vec<_> = controller
         .state
-        .registry
+        .provider_registry
         .list()
         .map(|info| OnboardingProvider {
             id: info.id.clone(),

@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::dialogue::{DialogueConfig, DialogueMode, DialogueParticipant};
 use crate::provider::ProviderId;
 
 use super::id::ConversationId;
@@ -21,6 +22,15 @@ pub struct Conversation {
     pub system_prompt: Option<String>,
     pub messages: Vec<ConversationMessage>,
     pub dirty: bool,
+    /// Dialogue mode when multiple LLMs are participating.
+    #[serde(default)]
+    pub dialogue_mode: Option<DialogueMode>,
+    /// Participants in a multi-LLM dialogue.
+    #[serde(default)]
+    pub participants: Vec<DialogueParticipant>,
+    /// Dialogue configuration (initial prompt, turn mode, etc.).
+    #[serde(default)]
+    pub dialogue_config: Option<DialogueConfig>,
 }
 
 impl Conversation {
@@ -41,7 +51,40 @@ impl Conversation {
             system_prompt,
             messages: Vec::new(),
             dirty: false,
+            dialogue_mode: None,
+            participants: Vec::new(),
+            dialogue_config: None,
         }
+    }
+
+    /// Returns whether this conversation is a multi-LLM dialogue.
+    #[must_use]
+    #[allow(dead_code)]
+    pub fn is_dialogue(&self) -> bool {
+        self.dialogue_mode.is_some() && !self.participants.is_empty()
+    }
+
+    /// Starts a dialogue with the given mode and participants.
+    pub fn start_dialogue(
+        &mut self,
+        mode: DialogueMode,
+        config: DialogueConfig,
+        participants: Vec<DialogueParticipant>,
+    ) {
+        self.dialogue_mode = Some(mode);
+        self.dialogue_config = Some(config);
+        self.participants = participants;
+        self.updated_at = Utc::now();
+        self.dirty = true;
+    }
+
+    /// Ends the dialogue, returning to single-LLM mode.
+    pub fn end_dialogue(&mut self) {
+        self.dialogue_mode = None;
+        self.dialogue_config = None;
+        self.participants.clear();
+        self.updated_at = Utc::now();
+        self.dirty = true;
     }
 
     pub fn push_message(&mut self, message: ConversationMessage) {

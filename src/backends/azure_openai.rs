@@ -105,6 +105,7 @@ impl<'a> From<&'a ChatMessage> for AzureOpenAIChatMessage<'a> {
                 // Image case is handled separately above
                 MessageType::Image(_) => unreachable!(),
                 MessageType::Pdf(_) => unimplemented!(),
+                MessageType::Audio(_) => None,
                 MessageType::ImageURL(url) => {
                     // Clone the URL to create an owned version
 
@@ -523,6 +524,8 @@ impl AzureOpenAI {
     }
 }
 
+const AUDIO_UNSUPPORTED: &str = "Audio messages are not supported by Azure OpenAI chat";
+
 #[async_trait]
 impl ChatProvider for AzureOpenAI {
     /// Sends a chat request to OpenAI's API.
@@ -539,6 +542,7 @@ impl ChatProvider for AzureOpenAI {
         messages: &[ChatMessage],
         tools: Option<&[Tool]>,
     ) -> Result<Box<dyn ChatResponse>, LLMError> {
+        crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
         if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError(
                 "Missing Azure OpenAI API key".to_string(),

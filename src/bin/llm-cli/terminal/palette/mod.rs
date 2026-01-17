@@ -56,12 +56,12 @@ mod tests {
     }
 
     #[test]
-    fn maps_ansi256_within_bounds() {
+    fn maps_ansi256_black_to_index_zero() {
+        const BLACK: Rgb = Rgb::new(0, 0, 0);
+        const BLACK_INDEX: u8 = 0;
+
         let palette = TerminalPalette::new(ColorLevel::Ansi256);
-        let mapped = palette.map(Rgb::new(120, 130, 140));
-        match mapped {
-            Color::Indexed(idx) => assert!(idx <= ansi::ANSI_256_MAX),
-            _ => panic!("expected indexed color"),
-        }
+        let mapped = palette.map(BLACK);
+        assert_eq!(mapped, Color::Indexed(BLACK_INDEX));
     }
 }

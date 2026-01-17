@@ -1,5 +1,6 @@
 mod backtrack;
 mod confirm;
+mod dialogue_builder;
 mod diff_viewer;
 mod help;
 mod onboarding;
@@ -41,6 +42,9 @@ pub fn render_overlay(frame: &mut Frame<'_>, area: Rect, overlay: &OverlayState,
         }
         OverlayState::ToolBuilder(state) => {
             tool_builder::render_tool_builder(frame, area, state, theme)
+        }
+        OverlayState::DialogueBuilder(state) => {
+            dialogue_builder::render_dialogue_builder(frame, area, state, theme)
         }
         OverlayState::Search(state) => search::render_search(frame, area, state, theme),
     }

@@ -16,7 +16,7 @@ pub fn confirm_exit(controller: &mut AppController) -> bool {
 pub fn open_provider_picker(controller: &mut AppController) -> bool {
     let items = controller
         .state
-        .registry
+        .provider_registry
         .list()
         .map(|info| PickerItem {
             id: info.id.to_string(),

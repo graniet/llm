@@ -114,13 +114,18 @@ impl AgentBuilder {
     pub fn build(self) -> Result<Box<dyn LLMProvider>, LLMError> {
         // Build the base LLM provider
         let base_provider = self.llm_builder.build()?;
+        let stt_provider = match self.stt_builder {
+            Some(builder) => Some(Arc::from(builder.build()?)),
+            None => None,
+        };
 
         // If memory is configured, wrap with ChatWithMemory including agent capabilities
         if let Some(memory) = self.memory {
             let memory_arc = Arc::new(RwLock::new(memory));
             let provider_arc = Arc::from(base_provider);
             let mut config = ChatWithMemoryConfig::new(provider_arc, memory_arc)
-                .role_triggers(self.role_triggers);
+                .role_triggers(self.role_triggers)
+                .stt_provider(stt_provider);
             if let Some(role) = self.role {
                 config = config.role(role);
             }

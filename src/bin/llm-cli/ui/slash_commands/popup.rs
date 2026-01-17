@@ -1,7 +1,7 @@
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::runtime::SlashCommandState;
@@ -16,7 +16,14 @@ pub fn render_slash_popup(
     state: &SlashCommandState,
     theme: &Theme,
 ) {
-    let block = Block::default().borders(Borders::ALL).title("Commands");
+    // Clear the area first
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme.border_focused)
+        .style(Style::default().bg(Color::Black))
+        .title(" Commands ");
     let inner = block.inner(area);
     frame.render_widget(block, area);
     render_query(frame, inner, state, theme);

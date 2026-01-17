@@ -1,7 +1,7 @@
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::runtime::{ToolBuilderState, ToolBuilderStep};
@@ -14,24 +14,25 @@ pub fn render_tool_builder(
     state: &ToolBuilderState,
     theme: &Theme,
 ) {
+    // Clear the area first
+    frame.render_widget(Clear, area);
     let mut lines = Vec::new();
 
     // Title with step indicator
     let step_num = step_number(state.step);
     let total_steps = 5; // Name, Desc, Params, Command, Confirm
-    lines.push(Line::from(vec![
-        Span::styled(
-            format!("Create Custom Tool ({}/{})", step_num, total_steps),
-            theme.accent,
-        ),
-    ]));
+    lines.push(Line::from(vec![Span::styled(
+        format!("Create Custom Tool ({}/{})", step_num, total_steps),
+        theme.accent,
+    )]));
     lines.push(Line::default());
 
     // Show summary of entered data so far
     for summary_line in state.summary_lines() {
-        lines.push(Line::from(vec![
-            Span::styled(format!("  {}", summary_line), theme.muted),
-        ]));
+        lines.push(Line::from(vec![Span::styled(
+            format!("  {}", summary_line),
+            theme.muted,
+        )]));
     }
 
     if !state.summary_lines().is_empty() {
@@ -40,10 +41,7 @@ pub fn render_tool_builder(
 
     // Current step prompt
     lines.push(Line::from(vec![
-        Span::styled(
-            format!("{} ", indicators::PROMPT),
-            theme.prompt,
-        ),
+        Span::styled(format!("{} ", indicators::PROMPT), theme.prompt),
         Span::styled(state.step_prompt().to_string(), theme.status),
     ]));
 
@@ -69,21 +67,24 @@ pub fn render_tool_builder(
 
     // Help text
     lines.push(Line::default());
-    lines.push(Line::from(vec![
-        Span::styled("  Enter = next step, Esc = cancel", theme.muted),
-    ]));
+    lines.push(Line::from(vec![Span::styled(
+        "  Enter = next step, Esc = cancel",
+        theme.muted,
+    )]));
 
     // Show type hints for certain steps
     match state.step {
         ToolBuilderStep::ParamType => {
-            lines.push(Line::from(vec![
-                Span::styled("  Types: string, number, boolean (default: string)", theme.muted),
-            ]));
+            lines.push(Line::from(vec![Span::styled(
+                "  Types: string, number, boolean (default: string)",
+                theme.muted,
+            )]));
         }
         ToolBuilderStep::Command => {
-            lines.push(Line::from(vec![
-                Span::styled("  Use {{param_name}} to reference parameters", theme.muted),
-            ]));
+            lines.push(Line::from(vec![Span::styled(
+                "  Use {{param_name}} to reference parameters",
+                theme.muted,
+            )]));
         }
         _ => {}
     }
@@ -95,7 +96,8 @@ pub fn render_tool_builder(
             Block::default()
                 .borders(Borders::ALL)
                 .title(title)
-                .border_style(theme.border_focused),
+                .border_style(theme.border_focused)
+                .style(Style::default().bg(Color::Black)),
         )
         .wrap(Wrap { trim: true });
 

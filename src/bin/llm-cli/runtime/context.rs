@@ -112,6 +112,10 @@ fn estimate_message_tokens(message: &ChatMessage) -> u32 {
     let content_tokens = estimate_text_tokens(&message.content);
     match &message.message_type {
         llm::chat::MessageType::Text => content_tokens,
+        llm::chat::MessageType::Audio(_) => content_tokens,
+        llm::chat::MessageType::Image(_) => content_tokens,
+        llm::chat::MessageType::Pdf(_) => content_tokens,
+        llm::chat::MessageType::ImageURL(_) => content_tokens,
         llm::chat::MessageType::ToolUse(calls) => {
             content_tokens
                 + calls
@@ -126,7 +130,6 @@ fn estimate_message_tokens(message: &ChatMessage) -> u32 {
                     .map(|c| estimate_text_tokens(&c.function.arguments))
                     .sum::<u32>()
         }
-        _ => content_tokens,
     }
 }
 pub(crate) fn estimate_text_tokens(text: &str) -> u32 {

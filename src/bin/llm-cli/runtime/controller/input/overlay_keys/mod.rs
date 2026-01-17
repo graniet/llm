@@ -8,9 +8,9 @@ use super::helpers;
 use super::AppController;
 
 use handlers::{
-    handle_backtrack, handle_confirm, handle_diff_viewer, handle_help, handle_model_picker,
-    handle_onboarding, handle_pager, handle_picker, handle_search, handle_skill_picker,
-    handle_tool_approval, handle_tool_builder, handle_tool_picker,
+    handle_backtrack, handle_confirm, handle_dialogue_builder, handle_diff_viewer, handle_help,
+    handle_model_picker, handle_onboarding, handle_pager, handle_picker, handle_search,
+    handle_skill_picker, handle_tool_approval, handle_tool_builder, handle_tool_picker,
 };
 
 pub async fn handle_overlay_key(controller: &mut AppController, key: KeyEvent) -> bool {
@@ -35,6 +35,7 @@ pub async fn handle_overlay_key(controller: &mut AppController, key: KeyEvent) -
             OverlayState::ConfirmExit(_) => handle_confirm(key),
             OverlayState::ToolApproval(_) => handle_tool_approval(key),
             OverlayState::ToolBuilder(state) => handle_tool_builder(state, key),
+            OverlayState::DialogueBuilder(state) => handle_dialogue_builder(state, key),
             OverlayState::Search(state) => handle_search(state, key),
             OverlayState::None => OverlayResult::action(OverlayAction::None),
         }
@@ -83,15 +84,17 @@ fn apply_action(controller: &mut AppController, action: OverlayAction) -> bool {
             helpers::resolve_tool_approval(controller, approved);
             true
         }
-        OverlayAction::ToolBuilderComplete(draft) => {
-            controller.save_tool_from_builder(draft)
-        }
+        OverlayAction::ToolBuilderComplete(draft) => controller.save_tool_from_builder(draft),
         OverlayAction::ToolSelected(name) => {
-            controller.push_notice(&format!("Tool: {} (use /tool-remove {} to delete)", name, name));
+            controller.push_notice(format!(
+                "Tool: {} (use /tool-remove {} to delete)",
+                name, name
+            ));
             true
         }
-        OverlayAction::ToolRemove(name) => {
-            controller.remove_user_tool(&name)
+        OverlayAction::ToolRemove(name) => controller.remove_user_tool(&name),
+        OverlayAction::DialogueBuilderComplete(result) => {
+            controller.start_dialogue_from_builder(result)
         }
     }
 }
@@ -133,4 +136,5 @@ pub(super) enum OverlayAction {
     ToolBuilderComplete(crate::runtime::UserToolDraft),
     ToolSelected(String),
     ToolRemove(String),
+    DialogueBuilderComplete(crate::runtime::DialogueBuilderResult),
 }

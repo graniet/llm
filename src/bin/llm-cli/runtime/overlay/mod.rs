@@ -1,5 +1,6 @@
 mod backtrack;
 mod confirm;
+mod dialogue_builder;
 mod diff;
 mod onboarding;
 mod pager;
@@ -11,6 +12,9 @@ mod tool_builder;
 
 pub use backtrack::BacktrackOverlayState;
 pub use confirm::ConfirmState;
+pub use dialogue_builder::{
+    DialogueBuilderResult, DialogueBuilderState, DialogueBuilderStep, ParticipantField,
+};
 pub use diff::DiffViewerState;
 pub use onboarding::{OnboardingProvider, OnboardingState, OnboardingStep};
 pub use pager::PagerState;
@@ -37,5 +41,6 @@ pub enum OverlayState {
     ConfirmExit(ConfirmState),
     ToolApproval(ToolApprovalState),
     ToolBuilder(ToolBuilderState),
+    DialogueBuilder(DialogueBuilderState),
     Search(SearchState),
 }

@@ -55,6 +55,8 @@ pub struct Phind {
     pub client: Client,
 }
 
+const AUDIO_UNSUPPORTED: &str = "Phind does not support audio chat messages";
+
 #[derive(Debug)]
 pub struct PhindResponse {
     content: String,
@@ -251,6 +253,7 @@ impl ChatProvider for Phind {
     ///
     /// The provider's response text or an error
     async fn chat(&self, messages: &[ChatMessage]) -> Result<Box<dyn ChatResponse>, LLMError> {
+        crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
         let mut message_history = vec![];
         for m in messages {
             let role_str = match m.role {

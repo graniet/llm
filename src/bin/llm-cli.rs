@@ -6,6 +6,8 @@ mod args;
 mod config;
 #[path = "llm-cli/conversation/mod.rs"]
 mod conversation;
+#[path = "llm-cli/dialogue/mod.rs"]
+mod dialogue;
 #[path = "llm-cli/diff/mod.rs"]
 mod diff;
 #[path = "llm-cli/history/mod.rs"]

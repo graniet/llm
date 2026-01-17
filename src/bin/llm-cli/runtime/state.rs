@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::config::AppConfig;
 use crate::conversation::{Conversation, ConversationId, ConversationManager, MessageId};
+use crate::dialogue::DialogueController;
 use crate::history::BacktrackState;
 use crate::input::{InputBuffer, InputHistory};
 use crate::persistence::JsonConversationStore;
@@ -17,7 +18,7 @@ use super::{AnimationState, CollapsibleState, StatusMetrics};
 
 pub struct AppState {
     pub config: AppConfig,
-    pub registry: ProviderRegistry,
+    pub provider_registry: ProviderRegistry,
     pub store: JsonConversationStore,
     pub conversations: ConversationManager,
     pub skills: SkillCatalog,
@@ -39,6 +40,8 @@ pub struct AppState {
     pub paste_detector: PasteDetector,
     pub should_quit: bool,
     pub session_overrides: ProviderOverrides,
+    /// Active dialogue controller for multi-LLM conversations.
+    pub dialogue_controller: Option<DialogueController>,
 }
 
 impl AppState {
@@ -50,7 +53,7 @@ impl AppState {
     ) -> Self {
         Self {
             config,
-            registry,
+            provider_registry: registry,
             store,
             conversations: ConversationManager::new(),
             skills: SkillCatalog::default(),
@@ -72,6 +75,7 @@ impl AppState {
             paste_detector: PasteDetector::default(),
             should_quit: false,
             session_overrides: ProviderOverrides::default(),
+            dialogue_controller: None,
         }
     }
 

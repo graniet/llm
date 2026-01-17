@@ -46,6 +46,8 @@ pub enum MessageType {
     Image((ImageMime, Vec<u8>)),
     /// PDF message
     Pdf(Vec<u8>),
+    /// Audio message for speech-to-text processing
+    Audio(Vec<u8>),
     /// An image URL message
     ImageURL(String),
     /// A tool use
@@ -96,6 +98,19 @@ impl ChatMessage {
     pub fn assistant() -> ChatMessageBuilder {
         ChatMessageBuilder::new(ChatRole::Assistant)
     }
+
+    /// Check whether this message contains audio data.
+    pub fn has_audio(&self) -> bool {
+        matches!(self.message_type, MessageType::Audio(_))
+    }
+
+    /// Get audio bytes if this is an audio message.
+    pub fn audio_data(&self) -> Option<&[u8]> {
+        match &self.message_type {
+            MessageType::Audio(data) => Some(data),
+            _ => None,
+        }
+    }
 }
 
 /// Builder for ChatMessage
@@ -134,6 +149,12 @@ impl ChatMessageBuilder {
         self
     }
 
+    /// Set the message type as Audio
+    pub fn audio(mut self, audio_data: Vec<u8>) -> Self {
+        self.message_type = MessageType::Audio(audio_data);
+        self
+    }
+
     /// Set the message type as ImageURL
     pub fn image_url(mut self, url: impl Into<String>) -> Self {
         self.message_type = MessageType::ImageURL(url.into());
@@ -159,5 +180,24 @@ impl ChatMessageBuilder {
             message_type: self.message_type,
             content: self.content,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn audio_builder_sets_audio_type() {
+        let msg = ChatMessage::user().audio(vec![1, 2, 3]).build();
+        assert!(msg.has_audio());
+        assert_eq!(msg.audio_data(), Some([1, 2, 3].as_slice()));
+    }
+
+    #[test]
+    fn audio_accessors_ignore_non_audio() {
+        let msg = ChatMessage::assistant().content("hi").build();
+        assert!(!msg.has_audio());
+        assert_eq!(msg.audio_data(), None);
     }
 }

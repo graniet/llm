@@ -78,6 +78,7 @@ pub struct XAI {
     /// HTTP client for making requests.
     pub client: Client,
 }
+const AUDIO_UNSUPPORTED: &str = "XAI does not support audio chat messages";
 
 /// Search source configuration for search parameters
 #[derive(Debug, Clone, serde::Serialize)]
@@ -402,6 +403,7 @@ impl ChatProvider for XAI {
     ///
     /// The generated response text, or an error if the request fails.
     async fn chat(&self, messages: &[ChatMessage]) -> Result<Box<dyn ChatResponse>, LLMError> {
+        crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
         if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing X.AI API key".to_string()));
         }
@@ -522,6 +524,7 @@ impl ChatProvider for XAI {
         messages: &[ChatMessage],
     ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send>>, LLMError>
     {
+        crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
         if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError("Missing X.AI API key".to_string()));
         }

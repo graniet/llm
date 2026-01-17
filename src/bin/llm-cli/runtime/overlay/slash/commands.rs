@@ -184,5 +184,41 @@ pub(super) fn default_commands() -> Vec<SlashCommand> {
             SlashCategory::Help,
             Some("?"),
         ),
+        // Dialogue commands
+        SlashCommand::with_arg(
+            SlashCommandId::Multi,
+            "multi",
+            "Start multi-LLM dialogue",
+            SlashCategory::Dialogue,
+            "@provider:model @provider:model",
+        ),
+        SlashCommand::with_arg(
+            SlashCommandId::Invite,
+            "invite",
+            "Invite a participant to dialogue",
+            SlashCategory::Dialogue,
+            "@provider:model",
+        ),
+        SlashCommand::with_arg(
+            SlashCommandId::Kick,
+            "kick",
+            "Remove participant from dialogue",
+            SlashCategory::Dialogue,
+            "<name>",
+        ),
+        SlashCommand::new(
+            SlashCommandId::Stop,
+            "stop",
+            "Stop the current dialogue",
+            SlashCategory::Dialogue,
+            None,
+        ),
+        SlashCommand::new(
+            SlashCommandId::Continue,
+            "continue",
+            "Continue dialogue with next participant",
+            SlashCategory::Dialogue,
+            None,
+        ),
     ]
 }

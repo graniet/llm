@@ -11,3 +11,6 @@ mod impl_other;
 mod reactive;
 
 pub use wrapper::{ChatWithMemory, ChatWithMemoryConfig};
+
+#[cfg(test)]
+mod tests;

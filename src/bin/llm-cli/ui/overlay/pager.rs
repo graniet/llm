@@ -1,6 +1,7 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Text};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::runtime::PagerState;
@@ -10,9 +11,14 @@ use super::super::theme::Theme;
 const PAGER_HELP_HEIGHT: u16 = 1;
 
 pub fn render_pager(frame: &mut Frame<'_>, area: Rect, state: &PagerState, theme: &Theme) {
+    // Clear the area first
+    frame.render_widget(Clear, area);
+
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(state.title.as_str());
+        .border_style(theme.border_focused)
+        .style(Style::default().bg(Color::Black))
+        .title(format!(" {} ", state.title));
     frame.render_widget(block.clone(), area);
     let inner = block.inner(area);
     if inner.height == 0 {

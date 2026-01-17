@@ -1,7 +1,7 @@
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::runtime::PickerState;
@@ -11,9 +11,14 @@ use super::super::theme::Theme;
 const QUERY_HEIGHT: u16 = 1;
 
 pub fn render_picker(frame: &mut Frame<'_>, area: Rect, state: &PickerState, theme: &Theme) {
+    // Clear the area first so the picker is visible
+    frame.render_widget(Clear, area);
+
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(state.title.clone());
+        .border_style(theme.border_focused)
+        .style(Style::default().bg(Color::Black))
+        .title(format!(" {} ", state.title));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     render_query(frame, inner, state, theme);

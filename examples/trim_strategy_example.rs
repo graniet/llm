@@ -15,7 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Testing TrimStrategy::Summarize with window size 3");
 
-    let messages = vec![
+    let messages = [
         ChatMessage::user()
             .content("Hello, my name is Alice")
             .build(),
@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("\n--- Message {} ---", i + 1);
         println!("Sending: {}", message.content);
 
-        match llm.chat(&[message.clone()]).await {
+        match llm.chat(std::slice::from_ref(message)).await {
             Ok(response) => println!("Response: {response}"),
             Err(e) => eprintln!("Error: {e}"),
         }

@@ -1,7 +1,7 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Text};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::runtime::BacktrackOverlayState;
@@ -17,7 +17,14 @@ pub fn render_backtrack(
     state: &BacktrackOverlayState,
     theme: &Theme,
 ) {
-    let block = Block::default().borders(Borders::ALL).title("Backtrack");
+    // Clear the area first
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme.border_focused)
+        .style(Style::default().bg(Color::Black))
+        .title(" Backtrack ");
     frame.render_widget(block.clone(), area);
     let inner = block.inner(area);
     if inner.height == 0 {

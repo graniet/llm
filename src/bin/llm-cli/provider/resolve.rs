@@ -130,8 +130,10 @@ mod tests {
     #[test]
     fn resolve_selection_uses_config_default() {
         let args = empty_args();
-        let mut config = AppConfig::default();
-        config.default_provider = Some("openai:gpt-4o-mini".to_string());
+        let config = AppConfig {
+            default_provider: Some("openai:gpt-4o-mini".to_string()),
+            ..Default::default()
+        };
         let selection = resolve_selection(&args, &config, None).unwrap();
         assert_eq!(selection.provider_id.as_str(), "openai");
         assert_eq!(selection.model.as_deref(), Some("gpt-4o-mini"));

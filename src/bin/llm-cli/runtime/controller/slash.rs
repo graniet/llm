@@ -47,6 +47,12 @@ impl AppController {
             SlashCommandId::ToolAdd => self.open_tool_builder(),
             SlashCommandId::ToolList => self.open_tool_picker(),
             SlashCommandId::ToolRemove => handle_tool_remove(self, arg),
+            // Dialogue commands
+            SlashCommandId::Multi => handle_multi(self, arg),
+            SlashCommandId::Invite => handle_invite(self, arg),
+            SlashCommandId::Kick => handle_kick(self, arg),
+            SlashCommandId::Stop => handle_stop(self),
+            SlashCommandId::Continue => handle_continue(self),
             SlashCommandId::Help | SlashCommandId::Keys => helpers::open_help(self),
         }
     }
@@ -184,7 +190,7 @@ fn handle_tool_remove(controller: &mut AppController, arg: Option<&str>) -> bool
                 // Reload tools in registry
                 controller.tool_registry.load_user_tools(&path);
                 controller.set_status(AppStatus::Idle);
-                controller.push_notice(&format!("Tool '{}' removed", name));
+                controller.push_notice(format!("Tool '{}' removed", name));
                 true
             } else {
                 controller.set_status(AppStatus::Error(format!("Tool '{}' not found", name)));
@@ -196,6 +202,61 @@ fn handle_tool_remove(controller: &mut AppController, arg: Option<&str>) -> bool
             false
         }
     }
+}
+
+// Dialogue command handlers
+
+fn handle_multi(controller: &mut AppController, arg: Option<&str>) -> bool {
+    // Parse participants from arg: "@provider:model @provider:model ..."
+    let Some(participants_str) = arg else {
+        // Open dialogue builder UI if no arguments provided
+        controller.open_dialogue_builder();
+        return true;
+    };
+
+    let participants: Vec<&str> = participants_str
+        .split_whitespace()
+        .filter(|s| s.starts_with('@'))
+        .map(|s| s.trim_start_matches('@'))
+        .collect();
+
+    if participants.len() < 2 {
+        controller.set_status(AppStatus::Error(
+            "Multi-LLM dialogue requires at least 2 participants".to_string(),
+        ));
+        return false;
+    }
+
+    controller.start_dialogue(participants)
+}
+
+fn handle_invite(controller: &mut AppController, arg: Option<&str>) -> bool {
+    let Some(participant_str) = arg else {
+        controller.set_status(AppStatus::Error(
+            "Usage: /invite @provider:model".to_string(),
+        ));
+        return false;
+    };
+
+    let participant = participant_str.trim_start_matches('@');
+    controller.invite_dialogue_participant(participant)
+}
+
+fn handle_kick(controller: &mut AppController, arg: Option<&str>) -> bool {
+    let Some(name) = arg else {
+        controller.set_status(AppStatus::Error("Usage: /kick <name>".to_string()));
+        return false;
+    };
+
+    controller.kick_dialogue_participant(name)
+}
+
+fn handle_stop(controller: &mut AppController) -> bool {
+    controller.stop_dialogue()
+}
+
+fn handle_continue(controller: &mut AppController) -> bool {
+    controller.continue_dialogue()
 }
 
 #[cfg(test)]

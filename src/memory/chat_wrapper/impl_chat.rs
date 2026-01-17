@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use futures::future::try_join_all;
 
 use crate::{
     chat::{ChatMessage, ChatProvider, ChatResponse, ChatRole, Tool},
@@ -16,12 +17,15 @@ impl ChatProvider for ChatWithMemory {
         messages: &[ChatMessage],
         tools: Option<&[Tool]>,
     ) -> Result<Box<dyn ChatResponse>, LLMError> {
-        self.reset_cycle_counter(messages);
-        self.remember_messages(messages).await?;
+        let normalized = self.normalize_messages(messages).await?;
+        self.reset_cycle_counter(&normalized);
+        self.remember_messages(&normalized).await?;
 
         let mut context = self.load_context().await?;
-        self.maybe_summarize(&mut context).await?;
-        context.extend_from_slice(messages);
+        let summarized = self.maybe_summarize(&mut context).await?;
+        if summarized {
+            context.extend_from_slice(&normalized);
+        }
 
         let response = self.provider.chat_with_tools(&context, tools).await?;
         if let Some(text) = response.text() {
@@ -52,19 +56,46 @@ impl ChatWithMemory {
         Ok(())
     }
 
+    async fn normalize_messages(
+        &self,
+        messages: &[ChatMessage],
+    ) -> Result<Vec<ChatMessage>, LLMError> {
+        try_join_all(messages.iter().map(|msg| self.normalize_message(msg))).await
+    }
+
+    async fn normalize_message(&self, message: &ChatMessage) -> Result<ChatMessage, LLMError> {
+        if !message.has_audio() {
+            return Ok(message.clone());
+        }
+        let audio = message
+            .audio_data()
+            .ok_or_else(|| LLMError::InvalidRequest("Audio payload missing for message".into()))?;
+        let transcript = self.transcribe_audio(audio).await?;
+        let builder = match message.role {
+            ChatRole::User => ChatMessage::user(),
+            ChatRole::Assistant => ChatMessage::assistant(),
+        };
+        Ok(builder.content(transcript).build())
+    }
+
+    async fn transcribe_audio(&self, audio: &[u8]) -> Result<String, LLMError> {
+        let provider = self.stt_provider.as_ref().unwrap_or(&self.provider);
+        provider.transcribe(audio.to_vec()).await
+    }
+
     async fn load_context(&self) -> Result<Vec<ChatMessage>, LLMError> {
         let mem = self.memory.read().await;
         mem.recall("", None).await
     }
 
-    async fn maybe_summarize(&self, context: &mut Vec<ChatMessage>) -> Result<(), LLMError> {
+    async fn maybe_summarize(&self, context: &mut Vec<ChatMessage>) -> Result<bool, LLMError> {
         if !self.needs_summary().await? {
-            return Ok(());
+            return Ok(false);
         }
         let summary = self.provider.summarize_history(context).await?;
         self.replace_with_summary(summary).await?;
         *context = self.load_context().await?;
-        Ok(())
+        Ok(true)
     }
 
     async fn needs_summary(&self) -> Result<bool, LLMError> {
