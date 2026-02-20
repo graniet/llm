@@ -250,6 +250,10 @@ pub struct ToolDefinition {
 
     /// JSON schema for the tool's input parameters
     pub input_schema: Value,
+
+    /// Optional cache control directive for prompt caching
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<Value>,
 }
 
 /// Request for text embeddings
