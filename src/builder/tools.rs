@@ -115,6 +115,7 @@ pub struct FunctionBuilder {
     parameters: Vec<ParamBuilder>,
     required: Vec<String>,
     raw_schema: Option<serde_json::Value>,
+    cache_control: Option<serde_json::Value>,
 }
 
 impl FunctionBuilder {
@@ -126,6 +127,7 @@ impl FunctionBuilder {
             parameters: Vec::new(),
             required: Vec::new(),
             raw_schema: None,
+            cache_control: None,
         }
     }
 
@@ -153,6 +155,12 @@ impl FunctionBuilder {
         self
     }
 
+    /// Sets cache control for this tool (e.g. `json!({"type": "ephemeral"})` for Anthropic prompt caching).
+    pub fn cache_control(mut self, cache_control: serde_json::Value) -> Self {
+        self.cache_control = Some(cache_control);
+        self
+    }
+
     /// Builds the function tool.
     fn build(self) -> Tool {
         let FunctionBuilder {
@@ -161,6 +169,7 @@ impl FunctionBuilder {
             parameters,
             required,
             raw_schema,
+            cache_control,
         } = self;
 
         let parameters = build_parameters(raw_schema, parameters, required);
@@ -172,7 +181,60 @@ impl FunctionBuilder {
                 description,
                 parameters,
             },
+            cache_control,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn function_builder_without_cache_control() {
+        let tool = FunctionBuilder::new("my_tool")
+            .description("A test tool")
+            .build();
+
+        assert_eq!(tool.tool_type, "function");
+        assert_eq!(tool.function.name, "my_tool");
+        assert!(tool.cache_control.is_none());
+    }
+
+    #[test]
+    fn function_builder_with_cache_control() {
+        let tool = FunctionBuilder::new("my_tool")
+            .description("A test tool")
+            .cache_control(serde_json::json!({"type": "ephemeral"}))
+            .build();
+
+        assert_eq!(tool.function.name, "my_tool");
+        let cc = tool.cache_control.expect("cache_control should be set");
+        assert_eq!(cc, serde_json::json!({"type": "ephemeral"}));
+    }
+
+    #[test]
+    fn tool_serialization_omits_cache_control_when_none() {
+        let tool = FunctionBuilder::new("my_tool")
+            .description("desc")
+            .build();
+
+        let json = serde_json::to_value(&tool).unwrap();
+        assert!(json.get("cache_control").is_none());
+    }
+
+    #[test]
+    fn tool_serialization_includes_cache_control_when_set() {
+        let tool = FunctionBuilder::new("my_tool")
+            .description("desc")
+            .cache_control(serde_json::json!({"type": "ephemeral"}))
+            .build();
+
+        let json = serde_json::to_value(&tool).unwrap();
+        assert_eq!(
+            json.get("cache_control").unwrap(),
+            &serde_json::json!({"type": "ephemeral"})
+        );
     }
 }
 

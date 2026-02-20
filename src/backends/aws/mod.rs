@@ -10,9 +10,9 @@ use async_trait::async_trait;
 use aws_config::BehaviorVersion;
 use aws_sdk_bedrockruntime::{
     types::{
-        ContentBlock, ContentBlockDelta, ConversationRole, ConverseStreamOutput, Message,
-        SystemContentBlock, Tool, ToolConfiguration, ToolInputSchema, ToolResultBlock,
-        ToolResultContentBlock, ToolUseBlock,
+        CachePointBlock, CachePointType, ContentBlock, ContentBlockDelta, ConversationRole,
+        ConverseStreamOutput, Message, SystemContentBlock, Tool, ToolConfiguration,
+        ToolInputSchema, ToolResultBlock, ToolResultContentBlock, ToolUseBlock,
     },
     Client as BedrockClient,
 };
@@ -612,6 +612,13 @@ impl BedrockBackend {
         // Tools
         let mut bedrock_tools = Vec::new();
 
+        // Check if any tool has cache_control before consuming request.tools
+        let request_tools_need_cache = request
+            .tools
+            .as_ref()
+            .map(|tools| tools.iter().any(|t| t.cache_control.is_some()))
+            .unwrap_or(false);
+
         if let Some(tools) = request.tools {
             for tool in tools {
                 bedrock_tools.push(self.convert_tool(&tool)?);
@@ -647,6 +654,27 @@ impl BedrockBackend {
             for tool in tools {
                 bedrock_tools.push(self.convert_llm_tool(tool)?);
             }
+        }
+
+        // Append a CachePoint if any tool has cache_control set
+        let self_tools_need_cache = self
+            .tools
+            .as_ref()
+            .map(|tools| tools.iter().any(|t| t.cache_control.is_some()))
+            .unwrap_or(false);
+
+        if (request_tools_need_cache || self_tools_need_cache) && !bedrock_tools.is_empty() {
+            bedrock_tools.push(Tool::CachePoint(
+                CachePointBlock::builder()
+                    .r#type(CachePointType::Default)
+                    .build()
+                    .map_err(|e| {
+                        BedrockError::InvalidRequest(format!(
+                            "Failed to build cache point: {:?}",
+                            e
+                        ))
+                    })?,
+            ));
         }
 
         let effective_tool_choice = tool_choice.unwrap_or(LlmToolChoice::Auto);
@@ -1131,6 +1159,7 @@ impl ChatProvider for BedrockBackend {
                     name: t.function.name.clone(),
                     description: t.function.description.clone(),
                     input_schema: t.function.parameters.clone(),
+                    cache_control: t.cache_control.clone(),
                 })
                 .collect();
 
@@ -1275,5 +1304,115 @@ streaming = true
             overrides.supports(&model, ModelCapability::Streaming),
             Some(true)
         );
+    }
+
+    #[test]
+    fn test_prepare_chat_request_no_cache_point_without_cache_control() {
+        let backend = BedrockBackend::new(
+            "us-east-1".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let tools = vec![ToolDefinition {
+            name: "get_weather".to_string(),
+            description: "Get weather".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+            cache_control: None,
+        }];
+
+        let request = ChatRequest::new(vec![ChatMessage::user("hello")]).with_tools(tools);
+        let prepared = backend.prepare_chat_request(request).unwrap();
+
+        let tool_config = prepared.tool_config.expect("tool_config should be present");
+        let tools = tool_config.tools();
+        // Should only have the ToolSpec, no CachePoint
+        assert_eq!(tools.len(), 1);
+        assert!(matches!(tools[0], Tool::ToolSpec(_)));
+    }
+
+    #[test]
+    fn test_prepare_chat_request_appends_cache_point_with_cache_control() {
+        let backend = BedrockBackend::new(
+            "us-east-1".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let tools = vec![ToolDefinition {
+            name: "get_weather".to_string(),
+            description: "Get weather".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+            cache_control: Some(serde_json::json!({"type": "ephemeral"})),
+        }];
+
+        let request = ChatRequest::new(vec![ChatMessage::user("hello")]).with_tools(tools);
+        let prepared = backend.prepare_chat_request(request).unwrap();
+
+        let tool_config = prepared.tool_config.expect("tool_config should be present");
+        let tools = tool_config.tools();
+        // Should have ToolSpec + CachePoint
+        assert_eq!(tools.len(), 2);
+        assert!(matches!(tools[0], Tool::ToolSpec(_)));
+        assert!(matches!(tools[1], Tool::CachePoint(_)));
+    }
+
+    #[test]
+    fn test_prepare_chat_request_cache_point_from_self_tools() {
+        let llm_tools = vec![LlmTool {
+            tool_type: "function".to_string(),
+            function: crate::chat::FunctionTool {
+                name: "search".to_string(),
+                description: "Search".to_string(),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
+            },
+            cache_control: Some(serde_json::json!({"type": "ephemeral"})),
+        }];
+
+        let backend = BedrockBackend::new(
+            "us-east-1".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(llm_tools),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let request = ChatRequest::new(vec![ChatMessage::user("hello")]);
+        let prepared = backend.prepare_chat_request(request).unwrap();
+
+        let tool_config = prepared.tool_config.expect("tool_config should be present");
+        let tools = tool_config.tools();
+        // Should have ToolSpec + CachePoint
+        assert_eq!(tools.len(), 2);
+        assert!(matches!(tools[0], Tool::ToolSpec(_)));
+        assert!(matches!(tools[1], Tool::CachePoint(_)));
     }
 }

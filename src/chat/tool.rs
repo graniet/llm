@@ -63,6 +63,9 @@ pub struct Tool {
     pub tool_type: String,
     /// The function definition if this is a function tool
     pub function: FunctionTool,
+    /// Optional cache control directive (e.g. `{"type": "ephemeral"}` for Anthropic prompt caching)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<Value>,
 }
 
 /// Tool choice determines how the LLM uses available tools.
