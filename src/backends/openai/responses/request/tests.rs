@@ -38,6 +38,7 @@ fn sample_tool() -> Tool {
             description: "Get weather".to_string(),
             parameters: json!({"type": "object"}),
         },
+        cache_control: None,
     }
 }
 

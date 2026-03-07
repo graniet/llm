@@ -208,6 +208,10 @@ pub struct OpenAIResponseFormat {
     pub response_type: OpenAIResponseType,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub json_schema: Option<StructuredOutputFormat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize, Debug, Serialize)]
@@ -260,10 +264,16 @@ pub struct StreamFunctionCall {
 impl From<StructuredOutputFormat> for OpenAIResponseFormat {
     fn from(structured_response_format: StructuredOutputFormat) -> Self {
         match structured_response_format.schema {
-            None => OpenAIResponseFormat {
-                response_type: OpenAIResponseType::JsonSchema,
-                json_schema: Some(structured_response_format),
-            },
+            None => {
+                let name = structured_response_format.name.clone();
+                let schema = structured_response_format.schema.clone();
+                OpenAIResponseFormat {
+                    response_type: OpenAIResponseType::JsonSchema,
+                    json_schema: Some(structured_response_format),
+                    schema: schema,
+                    name: Some(name),
+                }
+            }
             Some(mut schema) => {
                 schema = if schema.get("additionalProperties").is_none() {
                     schema["additionalProperties"] = serde_json::json!(false);
@@ -271,14 +281,17 @@ impl From<StructuredOutputFormat> for OpenAIResponseFormat {
                 } else {
                     schema
                 };
+                let name = structured_response_format.name;
                 OpenAIResponseFormat {
                     response_type: OpenAIResponseType::JsonSchema,
+                    schema: Some(schema.clone()),
                     json_schema: Some(StructuredOutputFormat {
-                        name: structured_response_format.name,
-                        description: structured_response_format.description,
+                        name: name.clone(),
                         schema: Some(schema),
                         strict: structured_response_format.strict,
+                        description: structured_response_format.description,
                     }),
+                    name: Some(name),
                 }
             }
         }
