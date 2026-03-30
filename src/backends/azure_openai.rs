@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 /// Provides methods for chat and completion requests using Azure OpenAI's models.
 pub struct AzureOpenAI {
     pub api_key: String,
-    pub api_version: String,
+    pub api_version: Option<String>,
     pub base_url: Url,
     pub model: String,
     pub max_tokens: Option<u32>,
@@ -335,7 +335,7 @@ impl AzureOpenAI {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         api_key: impl Into<String>,
-        api_version: impl Into<String>,
+        api_version: Option<String>,
         deployment_id: impl Into<String>,
         endpoint: impl Into<String>,
         model: Option<String>,
@@ -358,12 +358,12 @@ impl AzureOpenAI {
         }
 
         let endpoint = endpoint.into();
-        let deployment_id = deployment_id.into();
+        let _deployment_id = deployment_id.into();
 
         Self {
             api_key: api_key.into(),
-            api_version: api_version.into(),
-            base_url: Url::parse(&format!("{endpoint}/openai/deployments/{deployment_id}/"))
+            api_version: api_version,
+            base_url: Url::parse(&format!("{endpoint}/openai/v1/"))
                 .expect("Failed to parse base Url"),
             model: model.unwrap_or("gpt-3.5-turbo".to_string()),
             max_tokens,
@@ -479,9 +479,12 @@ impl ChatProvider for AzureOpenAI {
             .join("chat/completions")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+            if let Some(api_version) = &self.api_version {
+                url.query_pairs_mut()
+                    .append_pair("api-version", api_version);
+            }
 
+        log::info!("Azure OpenAI HTTP Request {}", url);
         let mut request = self
             .client
             .post(url)
@@ -502,7 +505,7 @@ impl ChatProvider for AzureOpenAI {
             let status = response.status();
             let error_text = response.text().await?;
             return Err(LLMError::ResponseFormatError {
-                message: format!("OpenAI API returned error status: {status}"),
+                message: format!("Azure OpenAI API returned error status: {status}"),
                 raw_response: error_text,
             });
         }
@@ -563,8 +566,10 @@ impl EmbeddingProvider for AzureOpenAI {
             .join("embeddings")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+            if let Some(api_version) = &self.api_version {
+                url.query_pairs_mut()
+                    .append_pair("api-version", api_version);
+            }
 
         let resp = self
             .client
@@ -623,8 +628,10 @@ impl ModelsProvider for AzureOpenAI {
             .join("models")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+            if let Some(api_version) = &self.api_version {
+                url.query_pairs_mut()
+                    .append_pair("api-version", api_version);
+            }
 
         let mut request = self.client.get(url).header("api-key", &self.api_key);
 

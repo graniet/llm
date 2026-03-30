@@ -1053,11 +1053,7 @@ impl LLMBuilder {
                     let key = self.api_key.ok_or_else(|| {
                         LLMError::InvalidRequest("No API key provided for Azure OpenAI".to_string())
                     })?;
-                    let api_version = self.api_version.ok_or_else(|| {
-                        LLMError::InvalidRequest(
-                            "No API version provided for Azure OpenAI".to_string(),
-                        )
-                    })?;
+                    let api_version = self.api_version;
                     let deployment = self.deployment_id.ok_or_else(|| {
                         LLMError::InvalidRequest(
                             "No deployment ID provided for Azure OpenAI".into(),
