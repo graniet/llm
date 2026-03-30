@@ -32,7 +32,7 @@ pub struct AzureOpenAIConfig {
     /// API key for authentication.
     pub api_key: String,
     /// API version string.
-    pub api_version: String,
+    pub api_version: Option<String>,
     /// Base URL for API requests.
     pub base_url: Url,
     /// Model identifier.
@@ -363,7 +363,7 @@ impl AzureOpenAI {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         api_key: impl Into<String>,
-        api_version: impl Into<String>,
+        api_version: Option<String>,
         deployment_id: impl Into<String>,
         endpoint: impl Into<String>,
         model: Option<String>,
@@ -411,7 +411,7 @@ impl AzureOpenAI {
     pub fn with_client(
         client: Client,
         api_key: impl Into<String>,
-        api_version: impl Into<String>,
+        api_version: Option<String>,
         deployment_id: impl Into<String>,
         endpoint: impl Into<String>,
         model: Option<String>,
@@ -429,13 +429,13 @@ impl AzureOpenAI {
         json_schema: Option<StructuredOutputFormat>,
     ) -> Self {
         let endpoint = endpoint.into();
-        let deployment_id = deployment_id.into();
+        let _deployment_id = deployment_id.into();
 
         Self {
             config: Arc::new(AzureOpenAIConfig {
                 api_key: api_key.into(),
-                api_version: api_version.into(),
-                base_url: Url::parse(&format!("{endpoint}/openai/deployments/{deployment_id}/"))
+                api_version,
+                base_url: Url::parse(&format!("{endpoint}/openai/v1/"))
                     .expect("Failed to parse base Url"),
                 model: model.unwrap_or("gpt-3.5-turbo".to_string()),
                 max_tokens,
@@ -459,7 +459,7 @@ impl AzureOpenAI {
         &self.config.api_key
     }
 
-    pub fn api_version(&self) -> &str {
+    pub fn api_version(&self) -> &Option<String> {
         &self.config.api_version
     }
 
@@ -626,9 +626,12 @@ impl ChatProvider for AzureOpenAI {
             .join("chat/completions")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.config.api_version);
+            if let Some(api_version) = &self.config.api_version {
+                url.query_pairs_mut()
+                    .append_pair("api-version", api_version);
+            }
 
+        log::info!("Azure OpenAI HTTP Request {}", url);
         let mut request = self
             .client
             .post(url)
@@ -649,7 +652,7 @@ impl ChatProvider for AzureOpenAI {
             let status = response.status();
             let error_text = response.text().await?;
             return Err(LLMError::ResponseFormatError {
-                message: format!("OpenAI API returned error status: {status}"),
+                message: format!("Azure OpenAI API returned error status: {status}"),
                 raw_response: error_text,
             });
         }
@@ -712,8 +715,10 @@ impl EmbeddingProvider for AzureOpenAI {
             .join("embeddings")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.config.api_version);
+            if let Some(api_version) = &self.config.api_version {
+                url.query_pairs_mut()
+                    .append_pair("api-version", api_version);
+            }
 
         let resp = self
             .client
@@ -773,8 +778,10 @@ impl ModelsProvider for AzureOpenAI {
             .join("models")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.config.api_version);
+            if let Some(api_version) = &self.config.api_version {
+                url.query_pairs_mut()
+                    .append_pair("api-version", api_version);
+            }
 
         let mut request = self.client.get(url).header("api-key", &self.config.api_key);
 
