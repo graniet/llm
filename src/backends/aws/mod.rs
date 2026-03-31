@@ -1502,6 +1502,7 @@ impl ChatProvider for BedrockBackend {
                     name: t.function.name.clone(),
                     description: t.function.description.clone(),
                     input_schema: t.function.parameters.clone(),
+                    cache_control: t.cache_control.clone(),
                 })
                 .collect();
 

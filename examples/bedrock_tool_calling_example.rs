@@ -49,6 +49,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             },
             "required": ["location"]
         }),
+        cache_control: None,
     }];
 
     // Start conversation

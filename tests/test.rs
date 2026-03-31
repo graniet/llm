@@ -278,6 +278,7 @@ mod bedrock_tests {
                 },
                 "required": ["location"]
             }),
+            cache_control: None,
         }];
 
         let messages = vec![ChatMessage::user("What's the weather in San Francisco?")];
@@ -330,6 +331,7 @@ mod bedrock_tests {
                 },
                 "required": ["location"]
             }),
+            cache_control: None,
         }];
 
         let messages = vec![ChatMessage::user(
@@ -395,6 +397,7 @@ mod bedrock_tests {
                 },
                 "required": ["expression"]
             }),
+            cache_control: None,
         }];
 
         // First request to get tool use
@@ -729,6 +732,7 @@ mod bedrock_tests {
             name: "test_tool".to_string(),
             description: "A test tool".to_string(),
             input_schema: json!({"type": "object"}),
+            cache_control: None,
         }];
 
         let messages = vec![ChatMessage::user("Use the tool")];
