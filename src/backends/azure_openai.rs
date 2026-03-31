@@ -8,7 +8,10 @@ use std::sync::Arc;
 use crate::{
     builder::LLMBackend,
     chat::Tool,
-    chat::{ChatMessage, ChatProvider, ChatRole, MessageType, StructuredOutputFormat},
+    chat::{
+        ChatMessage, ChatProvider, ChatRole, MessageType, StreamChunk, StreamResponse,
+        StructuredOutputFormat,
+    },
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
     error::LLMError,
@@ -17,6 +20,8 @@ use crate::{
     tts::TextToSpeechProvider,
     LLMProvider,
 };
+#[cfg(feature = "azure_openai")]
+use futures::StreamExt;
 use crate::{
     chat::{ChatResponse, ToolChoice},
     FunctionCall, ToolCall,
@@ -673,6 +678,274 @@ impl ChatProvider for AzureOpenAI {
 
     async fn chat(&self, messages: &[ChatMessage]) -> Result<Box<dyn ChatResponse>, LLMError> {
         self.chat_with_tools(messages, None).await
+    }
+
+    async fn chat_stream(
+        &self,
+        messages: &[ChatMessage],
+    ) -> Result<
+        std::pin::Pin<Box<dyn futures::Stream<Item = Result<String, LLMError>> + Send>>,
+        LLMError,
+    > {
+        let struct_stream = self.chat_stream_struct(messages).await?;
+        let content_stream = struct_stream.filter_map(|result| async move {
+            match result {
+                Ok(stream_response) => {
+                    if let Some(choice) = stream_response.choices.first() {
+                        if let Some(content) = &choice.delta.content {
+                            if !content.is_empty() {
+                                return Some(Ok(content.clone()));
+                            }
+                        }
+                    }
+                    None
+                }
+                Err(e) => Some(Err(e)),
+            }
+        });
+        Ok(Box::pin(content_stream))
+    }
+
+    async fn chat_stream_struct(
+        &self,
+        messages: &[ChatMessage],
+    ) -> Result<
+        std::pin::Pin<Box<dyn futures::Stream<Item = Result<StreamResponse, LLMError>> + Send>>,
+        LLMError,
+    > {
+        use crate::providers::openai_compatible::create_sse_stream;
+
+        crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
+        if self.config.api_key.is_empty() {
+            return Err(LLMError::AuthError(
+                "Missing Azure OpenAI API key".to_string(),
+            ));
+        }
+
+        let mut openai_msgs: Vec<AzureOpenAIChatMessage> = vec![];
+
+        for msg in messages {
+            if let MessageType::ToolResult(ref results) = msg.message_type {
+                for result in results {
+                    openai_msgs.push(AzureOpenAIChatMessage {
+                        role: "tool",
+                        tool_call_id: Some(result.id.clone()),
+                        tool_calls: None,
+                        content: Some(either::Right(result.function.arguments.clone())),
+                    });
+                }
+            } else {
+                openai_msgs.push(msg.into())
+            }
+        }
+
+        if let Some(system) = &self.config.system {
+            openai_msgs.insert(
+                0,
+                AzureOpenAIChatMessage {
+                    role: "system",
+                    content: Some(either::Left(vec![AzureMessageContent {
+                        message_type: Some("text"),
+                        text: Some(system),
+                        image_url: None,
+                        tool_call_id: None,
+                        tool_output: None,
+                    }])),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            );
+        }
+
+        let response_format: Option<OpenAIResponseFormat> =
+            self.config.json_schema.clone().map(|s| s.into());
+
+        let request_tools = self.config.tools.clone();
+        let request_tool_choice = if request_tools.is_some() {
+            self.config.tool_choice.clone()
+        } else {
+            None
+        };
+
+        let body = AzureOpenAIChatRequest {
+            model: &self.config.model,
+            messages: openai_msgs,
+            max_tokens: self.config.max_tokens,
+            temperature: self.config.temperature,
+            stream: true,
+            top_p: self.config.top_p,
+            top_k: self.config.top_k,
+            tools: request_tools,
+            tool_choice: request_tool_choice,
+            reasoning_effort: self.config.reasoning_effort.clone(),
+            response_format,
+        };
+
+        if log::log_enabled!(log::Level::Trace) {
+            if let Ok(json) = serde_json::to_string(&body) {
+                log::trace!("Azure OpenAI stream request payload: {}", json);
+            }
+        }
+
+        let mut url = self
+            .config
+            .base_url
+            .join("chat/completions")
+            .map_err(|e| LLMError::HttpError(e.to_string()))?;
+
+        if let Some(api_version) = &self.config.api_version {
+            url.query_pairs_mut()
+                .append_pair("api-version", api_version);
+        }
+
+        log::info!("Azure OpenAI stream HTTP Request {}", url);
+        let mut request = self
+            .client
+            .post(url)
+            .header("api-key", &self.config.api_key)
+            .json(&body);
+
+        if let Some(timeout) = self.config.timeout_seconds {
+            request = request.timeout(std::time::Duration::from_secs(timeout));
+        }
+
+        let response = request.send().await?;
+        log::debug!("Azure OpenAI stream HTTP status: {}", response.status());
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await?;
+            return Err(LLMError::ResponseFormatError {
+                message: format!("Azure OpenAI API returned error status: {status}"),
+                raw_response: error_text,
+            });
+        }
+
+        Ok(create_sse_stream(response, false))
+    }
+
+    async fn chat_stream_with_tools(
+        &self,
+        messages: &[ChatMessage],
+        tools: Option<&[Tool]>,
+    ) -> Result<
+        std::pin::Pin<Box<dyn futures::Stream<Item = Result<StreamChunk, LLMError>> + Send>>,
+        LLMError,
+    > {
+        use crate::providers::openai_compatible::create_sse_stream;
+
+        crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
+        if self.config.api_key.is_empty() {
+            return Err(LLMError::AuthError(
+                "Missing Azure OpenAI API key".to_string(),
+            ));
+        }
+
+        let mut openai_msgs: Vec<AzureOpenAIChatMessage> = vec![];
+
+        for msg in messages {
+            if let MessageType::ToolResult(ref results) = msg.message_type {
+                for result in results {
+                    openai_msgs.push(AzureOpenAIChatMessage {
+                        role: "tool",
+                        tool_call_id: Some(result.id.clone()),
+                        tool_calls: None,
+                        content: Some(either::Right(result.function.arguments.clone())),
+                    });
+                }
+            } else {
+                openai_msgs.push(msg.into())
+            }
+        }
+
+        if let Some(system) = &self.config.system {
+            openai_msgs.insert(
+                0,
+                AzureOpenAIChatMessage {
+                    role: "system",
+                    content: Some(either::Left(vec![AzureMessageContent {
+                        message_type: Some("text"),
+                        text: Some(system),
+                        image_url: None,
+                        tool_call_id: None,
+                        tool_output: None,
+                    }])),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            );
+        }
+
+        let response_format: Option<OpenAIResponseFormat> =
+            self.config.json_schema.clone().map(|s| s.into());
+
+        let effective_tools = tools
+            .map(|t| t.to_vec())
+            .or_else(|| self.config.tools.clone());
+        let request_tool_choice = if effective_tools.is_some() {
+            self.config.tool_choice.clone()
+        } else {
+            None
+        };
+
+        let body = AzureOpenAIChatRequest {
+            model: &self.config.model,
+            messages: openai_msgs,
+            max_tokens: self.config.max_tokens,
+            temperature: self.config.temperature,
+            stream: true,
+            top_p: self.config.top_p,
+            top_k: self.config.top_k,
+            tools: effective_tools,
+            tool_choice: request_tool_choice,
+            reasoning_effort: self.config.reasoning_effort.clone(),
+            response_format,
+        };
+
+        let mut url = self
+            .config
+            .base_url
+            .join("chat/completions")
+            .map_err(|e| LLMError::HttpError(e.to_string()))?;
+
+        if let Some(api_version) = &self.config.api_version {
+            url.query_pairs_mut()
+                .append_pair("api-version", api_version);
+        }
+
+        let mut request = self
+            .client
+            .post(url)
+            .header("api-key", &self.config.api_key)
+            .json(&body);
+
+        if let Some(timeout) = self.config.timeout_seconds {
+            request = request.timeout(std::time::Duration::from_secs(timeout));
+        }
+
+        let response = request.send().await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await?;
+            return Err(LLMError::ResponseFormatError {
+                message: format!("Azure OpenAI API returned error status: {status}"),
+                raw_response: error_text,
+            });
+        }
+
+        let struct_stream = create_sse_stream(response, false);
+        let chunk_stream = struct_stream.map(|result| {
+            result.map(|sr| {
+                let text = sr
+                    .choices
+                    .first()
+                    .and_then(|c| c.delta.content.clone())
+                    .unwrap_or_default();
+                StreamChunk::Text(text)
+            })
+        });
+        Ok(Box::pin(chunk_stream))
     }
 }
 
