@@ -205,7 +205,7 @@ struct OpenAIEmbeddingRequest {
 struct AzureOpenAIChatRequest<'a> {
     model: &'a str,
     messages: Vec<AzureOpenAIChatMessage<'a>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "max_completion_tokens", skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
