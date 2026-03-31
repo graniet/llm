@@ -27,7 +27,7 @@ pub(super) fn build_azure_openai(
     let timeout = helpers::timeout_or_default(state);
     let provider = crate::backends::azure_openai::AzureOpenAI::new(
         api_key,
-        api_version,
+        Option::from(api_version),
         deployment,
         endpoint,
         state.model.take(),
