@@ -2,7 +2,7 @@
 //!
 //! This module provides integration with Azure OpenAI's GPT models through their API.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 #[cfg(feature = "azure_openai")]
 use crate::{
@@ -21,7 +21,7 @@ use crate::{
     LLMProvider,
 };
 #[cfg(feature = "azure_openai")]
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use crate::{
     chat::{ChatResponse, ToolChoice},
     FunctionCall, ToolCall,
@@ -252,6 +252,45 @@ struct AzureOpenAIEmbeddingData {
 #[derive(Deserialize, Debug)]
 struct OpenAIEmbeddingResponse {
     data: Vec<AzureOpenAIEmbeddingData>,
+}
+
+#[derive(Debug, Default)]
+struct AzureToolUseState {
+    id: String,
+    name: String,
+    arguments_buffer: String,
+    started: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct AzureToolStreamChunk {
+    choices: Vec<AzureToolStreamChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AzureToolStreamChoice {
+    delta: AzureToolStreamDelta,
+    finish_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AzureToolStreamDelta {
+    content: Option<String>,
+    tool_calls: Option<Vec<AzureToolStreamToolCall>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AzureToolStreamToolCall {
+    index: Option<usize>,
+    id: Option<String>,
+    function: AzureToolStreamFunction,
+}
+
+#[derive(Debug, Deserialize)]
+struct AzureToolStreamFunction {
+    name: Option<String>,
+    #[serde(default)]
+    arguments: String,
 }
 
 /// An object specifying the format that the model must output.
@@ -527,6 +566,145 @@ impl AzureOpenAI {
     pub fn client(&self) -> &Client {
         &self.client
     }
+}
+
+#[cfg(feature = "azure_openai")]
+fn parse_azure_sse_chunk_with_tools(
+    event: &str,
+    tool_states: &mut HashMap<usize, AzureToolUseState>,
+) -> Result<Vec<StreamChunk>, LLMError> {
+    let mut results = Vec::new();
+
+    for line in event.lines() {
+        let line = line.trim();
+        let Some(data) = line.strip_prefix("data: ") else {
+            continue;
+        };
+
+        if data == "[DONE]" {
+            finish_azure_tool_calls(&mut results, tool_states);
+            results.push(StreamChunk::Done {
+                stop_reason: "end_turn".to_string(),
+            });
+            return Ok(results);
+        }
+
+        if let Ok(chunk) = serde_json::from_str::<AzureToolStreamChunk>(data) {
+            for choice in &chunk.choices {
+                if let Some(content) = &choice.delta.content {
+                    if !content.is_empty() {
+                        results.push(StreamChunk::Text(content.clone()));
+                    }
+                }
+
+                if let Some(tool_calls) = &choice.delta.tool_calls {
+                    for tc in tool_calls {
+                        let index = tc.index.unwrap_or(0);
+                        let state = tool_states.entry(index).or_default();
+
+                        if let Some(id) = &tc.id {
+                            state.id = id.clone();
+                        }
+                        if let Some(name) = &tc.function.name {
+                            state.name = name.clone();
+                            if !state.started {
+                                state.started = true;
+                                results.push(StreamChunk::ToolUseStart {
+                                    index,
+                                    id: state.id.clone(),
+                                    name: state.name.clone(),
+                                });
+                            }
+                        }
+
+                        if !tc.function.arguments.is_empty() {
+                            state.arguments_buffer.push_str(&tc.function.arguments);
+                            results.push(StreamChunk::ToolUseInputDelta {
+                                index,
+                                partial_json: tc.function.arguments.clone(),
+                            });
+                        }
+                    }
+                }
+
+                if let Some(finish_reason) = &choice.finish_reason {
+                    finish_azure_tool_calls(&mut results, tool_states);
+                    let stop_reason = match finish_reason.as_str() {
+                        "tool_calls" => "tool_use",
+                        "stop" => "end_turn",
+                        other => other,
+                    };
+                    results.push(StreamChunk::Done {
+                        stop_reason: stop_reason.to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+#[cfg(feature = "azure_openai")]
+fn finish_azure_tool_calls(
+    results: &mut Vec<StreamChunk>,
+    tool_states: &mut HashMap<usize, AzureToolUseState>,
+) {
+    for (index, state) in tool_states.drain() {
+        if state.started {
+            results.push(StreamChunk::ToolUseComplete {
+                index,
+                tool_call: ToolCall {
+                    id: state.id,
+                    call_type: "function".to_string(),
+                    function: FunctionCall {
+                        name: state.name,
+                        arguments: state.arguments_buffer,
+                    },
+                },
+            });
+        }
+    }
+}
+
+#[cfg(feature = "azure_openai")]
+fn create_azure_sse_stream_with_tools(
+    response: reqwest::Response,
+) -> std::pin::Pin<Box<dyn Stream<Item = Result<StreamChunk, LLMError>> + Send>> {
+    let bytes_stream = response.bytes_stream();
+    let stream = bytes_stream
+        .scan(
+            (String::new(), HashMap::<usize, AzureToolUseState>::new()),
+            |(event_buffer, tool_states), chunk| {
+                let results = match chunk {
+                    Ok(bytes) => {
+                        let text = String::from_utf8_lossy(&bytes);
+                        let mut results = Vec::new();
+                        for line in text.lines() {
+                            let line = line.trim_end();
+                            if line.is_empty() {
+                                if !event_buffer.is_empty() {
+                                    match parse_azure_sse_chunk_with_tools(event_buffer, tool_states)
+                                    {
+                                        Ok(chunks) => results.extend(chunks.into_iter().map(Ok)),
+                                        Err(e) => results.push(Err(e)),
+                                    }
+                                    event_buffer.clear();
+                                }
+                            } else {
+                                event_buffer.push_str(line);
+                                event_buffer.push('\n');
+                            }
+                        }
+                        results
+                    }
+                    Err(e) => vec![Err(LLMError::HttpError(e.to_string()))],
+                };
+                futures::future::ready(Some(results))
+            },
+        )
+        .flat_map(futures::stream::iter);
+    Box::pin(stream)
 }
 
 const AUDIO_UNSUPPORTED: &str = "Audio messages are not supported by Azure OpenAI chat";
@@ -832,8 +1010,6 @@ impl ChatProvider for AzureOpenAI {
         std::pin::Pin<Box<dyn futures::Stream<Item = Result<StreamChunk, LLMError>> + Send>>,
         LLMError,
     > {
-        use crate::providers::openai_compatible::create_sse_stream;
-
         crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
         if self.config.api_key.is_empty() {
             return Err(LLMError::AuthError(
@@ -934,18 +1110,7 @@ impl ChatProvider for AzureOpenAI {
             });
         }
 
-        let struct_stream = create_sse_stream(response, false);
-        let chunk_stream = struct_stream.map(|result| {
-            result.map(|sr| {
-                let text = sr
-                    .choices
-                    .first()
-                    .and_then(|c| c.delta.content.clone())
-                    .unwrap_or_default();
-                StreamChunk::Text(text)
-            })
-        });
-        Ok(Box::pin(chunk_stream))
+        Ok(create_azure_sse_stream_with_tools(response))
     }
 }
 
@@ -1068,5 +1233,47 @@ impl ModelsProvider for AzureOpenAI {
             backend: LLMBackend::AzureOpenAI,
         };
         Ok(Box::new(result))
+    }
+}
+
+#[cfg(all(test, feature = "azure_openai"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_azure_stream_tool_only_deltas() {
+        let mut tool_states = HashMap::new();
+
+        let start = r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_abc123","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}"#;
+        let chunks = parse_azure_sse_chunk_with_tools(start, &mut tool_states).unwrap();
+        assert!(matches!(
+            &chunks[0],
+            StreamChunk::ToolUseStart { index: 0, id, name }
+            if id == "call_abc123" && name == "get_weather"
+        ));
+
+        let delta = r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\":\"Paris\"}"}}]},"finish_reason":null}]}"#;
+        let chunks = parse_azure_sse_chunk_with_tools(delta, &mut tool_states).unwrap();
+        assert!(matches!(
+            &chunks[0],
+            StreamChunk::ToolUseInputDelta { index: 0, partial_json }
+            if partial_json == "{\"city\":\"Paris\"}"
+        ));
+
+        let finish =
+            r#"data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#;
+        let chunks = parse_azure_sse_chunk_with_tools(finish, &mut tool_states).unwrap();
+        assert_eq!(chunks.len(), 2);
+        assert!(matches!(
+            &chunks[0],
+            StreamChunk::ToolUseComplete { index: 0, tool_call }
+            if tool_call.id == "call_abc123"
+                && tool_call.function.name == "get_weather"
+                && tool_call.function.arguments == "{\"city\":\"Paris\"}"
+        ));
+        assert!(matches!(
+            &chunks[1],
+            StreamChunk::Done { stop_reason } if stop_reason == "tool_use"
+        ));
     }
 }
