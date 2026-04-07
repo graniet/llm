@@ -390,7 +390,7 @@ impl AzureOpenAI {
     /// # Arguments
     ///
     /// * `api_key` - OpenAI API key
-    /// * `model` - Model to use (defaults to "gpt-3.5-turbo")
+    /// * `model` - Model to use (defaults to the deployment ID)
     /// * `max_tokens` - Maximum tokens to generate
     /// * `temperature` - Sampling temperature
     /// * `timeout_seconds` - Request timeout in seconds
@@ -473,7 +473,7 @@ impl AzureOpenAI {
         json_schema: Option<StructuredOutputFormat>,
     ) -> Self {
         let endpoint = endpoint.into();
-        let _deployment_id = deployment_id.into();
+        let deployment_id = deployment_id.into();
 
         Self {
             config: Arc::new(AzureOpenAIConfig {
@@ -481,7 +481,7 @@ impl AzureOpenAI {
                 api_version,
                 base_url: Url::parse(&format!("{endpoint}/openai/v1/"))
                     .expect("Failed to parse base Url"),
-                model: model.unwrap_or("gpt-3.5-turbo".to_string()),
+                model: model.unwrap_or(deployment_id),
                 max_tokens,
                 temperature,
                 system,
@@ -1239,6 +1239,7 @@ impl ModelsProvider for AzureOpenAI {
 #[cfg(all(test, feature = "azure_openai"))]
 mod tests {
     use super::*;
+    use reqwest::Client;
 
     #[test]
     fn parse_azure_stream_tool_only_deltas() {
@@ -1275,5 +1276,31 @@ mod tests {
             &chunks[1],
             StreamChunk::Done { stop_reason } if stop_reason == "tool_use"
         ));
+    }
+
+    #[test]
+    fn falls_back_to_deployment_id_when_model_is_unset() {
+        let client = AzureOpenAI::with_client(
+            Client::new(),
+            "test-key",
+            Some("2024-10-21".to_string()),
+            "my-deployment",
+            "https://example.openai.azure.com",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(client.config.model, "my-deployment");
     }
 }
