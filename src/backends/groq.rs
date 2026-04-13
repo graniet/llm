@@ -66,6 +66,7 @@ impl Groq {
         json_schema: Option<StructuredOutputFormat>,
         parallel_tool_calls: Option<bool>,
         normalize_response: Option<bool>,
+        headers: Vec<(String, String)>,
     ) -> Self {
         OpenAICompatibleProvider::<GroqConfig>::new(
             api_key,
@@ -87,6 +88,7 @@ impl Groq {
             normalize_response,
             None, // embedding_encoding_format - not supported by Groq
             None, // embedding_dimensions - not supported by Groq
+            headers,
         )
     }
 }

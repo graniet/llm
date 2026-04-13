@@ -35,6 +35,7 @@ pub(super) fn build_cohere(
         state.normalize_response,
         state.embedding_encoding_format.take(),
         state.embedding_dimensions,
+        std::mem::take(&mut state.headers),
     );
     Ok(Box::new(provider))
 }

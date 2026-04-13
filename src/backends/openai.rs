@@ -220,6 +220,7 @@ impl OpenAI {
         json_schema: Option<StructuredOutputFormat>,
         voice: Option<String>,
         extra_body: Option<serde_json::Value>,
+        headers: Vec<(String, String)>,
         enable_web_search: Option<bool>,
         web_search_context_size: Option<String>,
         web_search_user_location_type: Option<String>,
@@ -252,6 +253,7 @@ impl OpenAI {
                 normalize_response,
                 embedding_encoding_format,
                 embedding_dimensions,
+                headers,
             ),
             enable_web_search: enable_web_search.unwrap_or(false),
             web_search_context_size,
@@ -446,6 +448,7 @@ impl SpeechToTextProvider for OpenAI {
             .post(url)
             .bearer_auth(&self.provider.config.api_key)
             .multipart(form);
+        req = self.provider.apply_headers(req);
 
         if let Some(t) = self.provider.config.timeout_seconds {
             req = req.timeout(Duration::from_secs(t));
@@ -480,6 +483,7 @@ impl SpeechToTextProvider for OpenAI {
             .post(url)
             .bearer_auth(&self.provider.config.api_key)
             .multipart(form);
+        req = self.provider.apply_headers(req);
 
         if let Some(t) = self.provider.config.timeout_seconds {
             req = req.timeout(Duration::from_secs(t));
@@ -526,15 +530,14 @@ impl EmbeddingProvider for OpenAI {
             .join("embeddings")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
-        let resp = self
+        let mut req = self
             .provider
             .client
             .post(url)
             .bearer_auth(&self.provider.config.api_key)
-            .json(&body)
-            .send()
-            .await?
-            .error_for_status()?;
+            .json(&body);
+        req = self.provider.apply_headers(req);
+        let resp = req.send().await?.error_for_status()?;
 
         let json_resp: OpenAIEmbeddingResponse = resp.json().await?;
         let embeddings = json_resp.data.into_iter().map(|d| d.embedding).collect();
@@ -555,14 +558,13 @@ impl ModelsProvider for OpenAI {
             .join("models")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
-        let resp = self
+        let mut req = self
             .provider
             .client
             .get(url)
-            .bearer_auth(&self.provider.config.api_key)
-            .send()
-            .await?
-            .error_for_status()?;
+            .bearer_auth(&self.provider.config.api_key);
+        req = self.provider.apply_headers(req);
+        let resp = req.send().await?.error_for_status()?;
 
         let result = StandardModelListResponse {
             inner: resp.json().await?,
@@ -611,6 +613,7 @@ impl OpenAI {
             .post(url)
             .bearer_auth(&self.provider.config.api_key)
             .json(body);
+        request = self.provider.apply_headers(request);
         self.log_request_payload(label, body);
         request = self.apply_timeout(request);
         request.send().await.map_err(LLMError::from)

@@ -35,6 +35,7 @@ pub(super) fn build_openai(
         state.json_schema.take(),
         state.voice.take(),
         state.extra_body.take(),
+        std::mem::take(&mut state.headers),
         state.openai_enable_web_search,
         state.openai_web_search_context_size.take(),
         state.openai_web_search_user_location_type.take(),

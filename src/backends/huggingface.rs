@@ -52,6 +52,7 @@ impl HuggingFace {
         json_schema: Option<StructuredOutputFormat>,
         parallel_tool_calls: Option<bool>,
         normalize_response: Option<bool>,
+        headers: Vec<(String, String)>,
     ) -> Self {
         OpenAICompatibleProvider::<HuggingFaceConfig>::new(
             api_key,
@@ -73,6 +74,7 @@ impl HuggingFace {
             normalize_response,
             None, // embedding_encoding_format
             None, // embedding_dimensions
+            headers,
         )
     }
 }

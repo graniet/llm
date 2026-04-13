@@ -111,4 +111,10 @@ impl LLMBuilder {
         self.state.top_k = Some(top_k);
         self
     }
+
+    /// Adds a custom HTTP header to every request.
+    pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.state.headers.push((key.into(), value.into()));
+        self
+    }
 }

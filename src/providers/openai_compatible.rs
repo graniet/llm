@@ -67,6 +67,8 @@ pub struct OpenAICompatibleProviderConfig {
     pub embedding_dimensions: Option<u32>,
     /// Whether to normalize streaming responses.
     pub normalize_response: bool,
+    /// User-supplied custom headers to attach to every request.
+    pub headers: Vec<(String, String)>,
 }
 
 /// Generic OpenAI-compatible provider
@@ -347,6 +349,7 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
         normalize_response: Option<bool>,
         embedding_encoding_format: Option<String>,
         embedding_dimensions: Option<u32>,
+        headers: Vec<(String, String)>,
     ) -> Self {
         let mut builder = Client::builder();
         if let Some(sec) = timeout_seconds {
@@ -374,6 +377,7 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
             normalize_response,
             embedding_encoding_format,
             embedding_dimensions,
+            headers,
         )
     }
 
@@ -400,6 +404,7 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
         normalize_response: Option<bool>,
         embedding_encoding_format: Option<String>,
         embedding_dimensions: Option<u32>,
+        headers: Vec<(String, String)>,
     ) -> Self {
         let extra_body = match extra_body {
             Some(serde_json::Value::Object(map)) => map,
@@ -431,6 +436,7 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
             normalize_response: normalize_response.unwrap_or(true),
             embedding_encoding_format,
             embedding_dimensions,
+            headers,
         };
         Self {
             config: Arc::new(config),
@@ -517,6 +523,14 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
 
     pub fn client(&self) -> &Client {
         &self.client
+    }
+
+    /// Attaches all user-supplied custom headers to a request builder.
+    pub fn apply_headers(&self, mut request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        for (key, value) in &self.config.headers {
+            request = request.header(key.as_str(), value.as_str());
+        }
+        request
     }
 
     pub fn prepare_messages(&self, messages: &[ChatMessage]) -> Vec<OpenAIChatMessage<'_>> {
@@ -626,6 +640,7 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
             .post(url)
             .bearer_auth(&self.config.api_key)
             .json(&body);
+        request = self.apply_headers(request);
         // Add custom headers if provider specifies them
         if let Some(headers) = T::custom_headers() {
             for (key, value) in headers {
@@ -748,6 +763,7 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
             .post(url)
             .bearer_auth(&self.config.api_key)
             .json(&body);
+        request = self.apply_headers(request);
         if let Some(headers) = T::custom_headers() {
             for (key, value) in headers {
                 request = request.header(key, value);
@@ -852,6 +868,7 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
             .bearer_auth(&self.config.api_key)
             .json(&body);
 
+        request = self.apply_headers(request);
         if let Some(headers) = T::custom_headers() {
             for (key, value) in headers {
                 request = request.header(key, value);

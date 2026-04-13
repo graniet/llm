@@ -55,6 +55,7 @@ impl Mistral {
         json_schema: Option<StructuredOutputFormat>,
         parallel_tool_calls: Option<bool>,
         normalize_response: Option<bool>,
+        headers: Vec<(String, String)>,
     ) -> Self {
         <OpenAICompatibleProvider<MistralConfig>>::new(
             api_key,
@@ -76,6 +77,7 @@ impl Mistral {
             normalize_response,
             embedding_encoding_format,
             embedding_dimensions,
+            headers,
         )
     }
 }

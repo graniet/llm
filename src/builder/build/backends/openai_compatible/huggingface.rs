@@ -34,6 +34,7 @@ pub(super) fn build_huggingface(
         state.json_schema.take(),
         state.enable_parallel_tool_use,
         state.normalize_response,
+        std::mem::take(&mut state.headers),
     );
     Ok(Box::new(provider))
 }

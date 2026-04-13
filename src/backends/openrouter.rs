@@ -52,6 +52,7 @@ impl OpenRouter {
         json_schema: Option<StructuredOutputFormat>,
         parallel_tool_calls: Option<bool>,
         normalize_response: Option<bool>,
+        headers: Vec<(String, String)>,
     ) -> Self {
         OpenAICompatibleProvider::<OpenRouterConfig>::new(
             api_key,
@@ -73,6 +74,7 @@ impl OpenRouter {
             normalize_response,
             None, // embedding_encoding_format - not supported by OpenRouter
             None, // embedding_dimensions - not supported by OpenRouter
+            headers,
         )
     }
 }

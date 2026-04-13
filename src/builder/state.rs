@@ -21,6 +21,7 @@ pub(crate) struct BuilderState {
     pub(crate) timeout_seconds: Option<u64>,
     pub(crate) top_p: Option<f32>,
     pub(crate) top_k: Option<u32>,
+    pub(crate) headers: Vec<(String, String)>,
     pub(crate) embedding_encoding_format: Option<String>,
     pub(crate) embedding_dimensions: Option<u32>,
     pub(crate) validator: Option<Box<ValidatorFn>>,
