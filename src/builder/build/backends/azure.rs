@@ -17,9 +17,6 @@ pub(super) fn build_azure_openai(
         LLMError::InvalidRequest("No API endpoint provided for Azure OpenAI".into())
     })?;
     let api_key = helpers::require_api_key(state, "Azure OpenAI")?;
-    let api_version = state.api_version.take().ok_or_else(|| {
-        LLMError::InvalidRequest("No API version provided for Azure OpenAI".to_string())
-    })?;
     let deployment = state.deployment_id.take().ok_or_else(|| {
         LLMError::InvalidRequest("No deployment ID provided for Azure OpenAI".into())
     })?;
@@ -27,7 +24,7 @@ pub(super) fn build_azure_openai(
     let timeout = helpers::timeout_or_default(state);
     let provider = crate::backends::azure_openai::AzureOpenAI::new(
         api_key,
-        api_version,
+        state.api_version.clone(),
         deployment,
         endpoint,
         state.model.take(),

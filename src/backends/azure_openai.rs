@@ -2,13 +2,16 @@
 //!
 //! This module provides integration with Azure OpenAI's GPT models through their API.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 #[cfg(feature = "azure_openai")]
 use crate::{
     builder::LLMBackend,
     chat::Tool,
-    chat::{ChatMessage, ChatProvider, ChatRole, MessageType, StructuredOutputFormat},
+    chat::{
+        ChatMessage, ChatProvider, ChatRole, MessageType, StreamChunk, StreamResponse,
+        StructuredOutputFormat,
+    },
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
     error::LLMError,
@@ -17,6 +20,8 @@ use crate::{
     tts::TextToSpeechProvider,
     LLMProvider,
 };
+#[cfg(feature = "azure_openai")]
+use futures::{Stream, StreamExt};
 use crate::{
     chat::{ChatResponse, ToolChoice},
     FunctionCall, ToolCall,
@@ -32,7 +37,7 @@ pub struct AzureOpenAIConfig {
     /// API key for authentication.
     pub api_key: String,
     /// API version string.
-    pub api_version: String,
+    pub api_version: Option<String>,
     /// Base URL for API requests.
     pub base_url: Url,
     /// Model identifier.
@@ -200,7 +205,7 @@ struct OpenAIEmbeddingRequest {
 struct AzureOpenAIChatRequest<'a> {
     model: &'a str,
     messages: Vec<AzureOpenAIChatMessage<'a>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "max_completion_tokens", skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
@@ -247,6 +252,45 @@ struct AzureOpenAIEmbeddingData {
 #[derive(Deserialize, Debug)]
 struct OpenAIEmbeddingResponse {
     data: Vec<AzureOpenAIEmbeddingData>,
+}
+
+#[derive(Debug, Default)]
+struct AzureToolUseState {
+    id: String,
+    name: String,
+    arguments_buffer: String,
+    started: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct AzureToolStreamChunk {
+    choices: Vec<AzureToolStreamChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AzureToolStreamChoice {
+    delta: AzureToolStreamDelta,
+    finish_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AzureToolStreamDelta {
+    content: Option<String>,
+    tool_calls: Option<Vec<AzureToolStreamToolCall>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AzureToolStreamToolCall {
+    index: Option<usize>,
+    id: Option<String>,
+    function: AzureToolStreamFunction,
+}
+
+#[derive(Debug, Deserialize)]
+struct AzureToolStreamFunction {
+    name: Option<String>,
+    #[serde(default)]
+    arguments: String,
 }
 
 /// An object specifying the format that the model must output.
@@ -346,7 +390,7 @@ impl AzureOpenAI {
     /// # Arguments
     ///
     /// * `api_key` - OpenAI API key
-    /// * `model` - Model to use (defaults to "gpt-3.5-turbo")
+    /// * `model` - Model to use (defaults to the deployment ID)
     /// * `max_tokens` - Maximum tokens to generate
     /// * `temperature` - Sampling temperature
     /// * `timeout_seconds` - Request timeout in seconds
@@ -363,7 +407,7 @@ impl AzureOpenAI {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         api_key: impl Into<String>,
-        api_version: impl Into<String>,
+        api_version: Option<String>,
         deployment_id: impl Into<String>,
         endpoint: impl Into<String>,
         model: Option<String>,
@@ -411,7 +455,7 @@ impl AzureOpenAI {
     pub fn with_client(
         client: Client,
         api_key: impl Into<String>,
-        api_version: impl Into<String>,
+        api_version: Option<String>,
         deployment_id: impl Into<String>,
         endpoint: impl Into<String>,
         model: Option<String>,
@@ -434,10 +478,10 @@ impl AzureOpenAI {
         Self {
             config: Arc::new(AzureOpenAIConfig {
                 api_key: api_key.into(),
-                api_version: api_version.into(),
-                base_url: Url::parse(&format!("{endpoint}/openai/deployments/{deployment_id}/"))
+                api_version,
+                base_url: Url::parse(&format!("{endpoint}/openai/v1/"))
                     .expect("Failed to parse base Url"),
-                model: model.unwrap_or("gpt-3.5-turbo".to_string()),
+                model: model.unwrap_or(deployment_id),
                 max_tokens,
                 temperature,
                 system,
@@ -459,7 +503,7 @@ impl AzureOpenAI {
         &self.config.api_key
     }
 
-    pub fn api_version(&self) -> &str {
+    pub fn api_version(&self) -> &Option<String> {
         &self.config.api_version
     }
 
@@ -522,6 +566,145 @@ impl AzureOpenAI {
     pub fn client(&self) -> &Client {
         &self.client
     }
+}
+
+#[cfg(feature = "azure_openai")]
+fn parse_azure_sse_chunk_with_tools(
+    event: &str,
+    tool_states: &mut HashMap<usize, AzureToolUseState>,
+) -> Result<Vec<StreamChunk>, LLMError> {
+    let mut results = Vec::new();
+
+    for line in event.lines() {
+        let line = line.trim();
+        let Some(data) = line.strip_prefix("data: ") else {
+            continue;
+        };
+
+        if data == "[DONE]" {
+            finish_azure_tool_calls(&mut results, tool_states);
+            results.push(StreamChunk::Done {
+                stop_reason: "end_turn".to_string(),
+            });
+            return Ok(results);
+        }
+
+        if let Ok(chunk) = serde_json::from_str::<AzureToolStreamChunk>(data) {
+            for choice in &chunk.choices {
+                if let Some(content) = &choice.delta.content {
+                    if !content.is_empty() {
+                        results.push(StreamChunk::Text(content.clone()));
+                    }
+                }
+
+                if let Some(tool_calls) = &choice.delta.tool_calls {
+                    for tc in tool_calls {
+                        let index = tc.index.unwrap_or(0);
+                        let state = tool_states.entry(index).or_default();
+
+                        if let Some(id) = &tc.id {
+                            state.id = id.clone();
+                        }
+                        if let Some(name) = &tc.function.name {
+                            state.name = name.clone();
+                            if !state.started {
+                                state.started = true;
+                                results.push(StreamChunk::ToolUseStart {
+                                    index,
+                                    id: state.id.clone(),
+                                    name: state.name.clone(),
+                                });
+                            }
+                        }
+
+                        if !tc.function.arguments.is_empty() {
+                            state.arguments_buffer.push_str(&tc.function.arguments);
+                            results.push(StreamChunk::ToolUseInputDelta {
+                                index,
+                                partial_json: tc.function.arguments.clone(),
+                            });
+                        }
+                    }
+                }
+
+                if let Some(finish_reason) = &choice.finish_reason {
+                    finish_azure_tool_calls(&mut results, tool_states);
+                    let stop_reason = match finish_reason.as_str() {
+                        "tool_calls" => "tool_use",
+                        "stop" => "end_turn",
+                        other => other,
+                    };
+                    results.push(StreamChunk::Done {
+                        stop_reason: stop_reason.to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+#[cfg(feature = "azure_openai")]
+fn finish_azure_tool_calls(
+    results: &mut Vec<StreamChunk>,
+    tool_states: &mut HashMap<usize, AzureToolUseState>,
+) {
+    for (index, state) in tool_states.drain() {
+        if state.started {
+            results.push(StreamChunk::ToolUseComplete {
+                index,
+                tool_call: ToolCall {
+                    id: state.id,
+                    call_type: "function".to_string(),
+                    function: FunctionCall {
+                        name: state.name,
+                        arguments: state.arguments_buffer,
+                    },
+                },
+            });
+        }
+    }
+}
+
+#[cfg(feature = "azure_openai")]
+fn create_azure_sse_stream_with_tools(
+    response: reqwest::Response,
+) -> std::pin::Pin<Box<dyn Stream<Item = Result<StreamChunk, LLMError>> + Send>> {
+    let bytes_stream = response.bytes_stream();
+    let stream = bytes_stream
+        .scan(
+            (String::new(), HashMap::<usize, AzureToolUseState>::new()),
+            |(event_buffer, tool_states), chunk| {
+                let results = match chunk {
+                    Ok(bytes) => {
+                        let text = String::from_utf8_lossy(&bytes);
+                        let mut results = Vec::new();
+                        for line in text.lines() {
+                            let line = line.trim_end();
+                            if line.is_empty() {
+                                if !event_buffer.is_empty() {
+                                    match parse_azure_sse_chunk_with_tools(event_buffer, tool_states)
+                                    {
+                                        Ok(chunks) => results.extend(chunks.into_iter().map(Ok)),
+                                        Err(e) => results.push(Err(e)),
+                                    }
+                                    event_buffer.clear();
+                                }
+                            } else {
+                                event_buffer.push_str(line);
+                                event_buffer.push('\n');
+                            }
+                        }
+                        results
+                    }
+                    Err(e) => vec![Err(LLMError::HttpError(e.to_string()))],
+                };
+                futures::future::ready(Some(results))
+            },
+        )
+        .flat_map(futures::stream::iter);
+    Box::pin(stream)
 }
 
 const AUDIO_UNSUPPORTED: &str = "Audio messages are not supported by Azure OpenAI chat";
@@ -626,9 +809,12 @@ impl ChatProvider for AzureOpenAI {
             .join("chat/completions")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.config.api_version);
+            if let Some(api_version) = &self.config.api_version {
+                url.query_pairs_mut()
+                    .append_pair("api-version", api_version);
+            }
 
+        log::info!("Azure OpenAI HTTP Request {}", url);
         let mut request = self
             .client
             .post(url)
@@ -649,7 +835,7 @@ impl ChatProvider for AzureOpenAI {
             let status = response.status();
             let error_text = response.text().await?;
             return Err(LLMError::ResponseFormatError {
-                message: format!("OpenAI API returned error status: {status}"),
+                message: format!("Azure OpenAI API returned error status: {status}"),
                 raw_response: error_text,
             });
         }
@@ -670,6 +856,261 @@ impl ChatProvider for AzureOpenAI {
 
     async fn chat(&self, messages: &[ChatMessage]) -> Result<Box<dyn ChatResponse>, LLMError> {
         self.chat_with_tools(messages, None).await
+    }
+
+    async fn chat_stream(
+        &self,
+        messages: &[ChatMessage],
+    ) -> Result<
+        std::pin::Pin<Box<dyn futures::Stream<Item = Result<String, LLMError>> + Send>>,
+        LLMError,
+    > {
+        let struct_stream = self.chat_stream_struct(messages).await?;
+        let content_stream = struct_stream.filter_map(|result| async move {
+            match result {
+                Ok(stream_response) => {
+                    if let Some(choice) = stream_response.choices.first() {
+                        if let Some(content) = &choice.delta.content {
+                            if !content.is_empty() {
+                                return Some(Ok(content.clone()));
+                            }
+                        }
+                    }
+                    None
+                }
+                Err(e) => Some(Err(e)),
+            }
+        });
+        Ok(Box::pin(content_stream))
+    }
+
+    async fn chat_stream_struct(
+        &self,
+        messages: &[ChatMessage],
+    ) -> Result<
+        std::pin::Pin<Box<dyn futures::Stream<Item = Result<StreamResponse, LLMError>> + Send>>,
+        LLMError,
+    > {
+        use crate::providers::openai_compatible::create_sse_stream;
+
+        crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
+        if self.config.api_key.is_empty() {
+            return Err(LLMError::AuthError(
+                "Missing Azure OpenAI API key".to_string(),
+            ));
+        }
+
+        let mut openai_msgs: Vec<AzureOpenAIChatMessage> = vec![];
+
+        for msg in messages {
+            if let MessageType::ToolResult(ref results) = msg.message_type {
+                for result in results {
+                    openai_msgs.push(AzureOpenAIChatMessage {
+                        role: "tool",
+                        tool_call_id: Some(result.id.clone()),
+                        tool_calls: None,
+                        content: Some(either::Right(result.function.arguments.clone())),
+                    });
+                }
+            } else {
+                openai_msgs.push(msg.into())
+            }
+        }
+
+        if let Some(system) = &self.config.system {
+            openai_msgs.insert(
+                0,
+                AzureOpenAIChatMessage {
+                    role: "system",
+                    content: Some(either::Left(vec![AzureMessageContent {
+                        message_type: Some("text"),
+                        text: Some(system),
+                        image_url: None,
+                        tool_call_id: None,
+                        tool_output: None,
+                    }])),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            );
+        }
+
+        let response_format: Option<OpenAIResponseFormat> =
+            self.config.json_schema.clone().map(|s| s.into());
+
+        let request_tools = self.config.tools.clone();
+        let request_tool_choice = if request_tools.is_some() {
+            self.config.tool_choice.clone()
+        } else {
+            None
+        };
+
+        let body = AzureOpenAIChatRequest {
+            model: &self.config.model,
+            messages: openai_msgs,
+            max_tokens: self.config.max_tokens,
+            temperature: self.config.temperature,
+            stream: true,
+            top_p: self.config.top_p,
+            top_k: self.config.top_k,
+            tools: request_tools,
+            tool_choice: request_tool_choice,
+            reasoning_effort: self.config.reasoning_effort.clone(),
+            response_format,
+        };
+
+        if log::log_enabled!(log::Level::Trace) {
+            if let Ok(json) = serde_json::to_string(&body) {
+                log::trace!("Azure OpenAI stream request payload: {}", json);
+            }
+        }
+
+        let mut url = self
+            .config
+            .base_url
+            .join("chat/completions")
+            .map_err(|e| LLMError::HttpError(e.to_string()))?;
+
+        if let Some(api_version) = &self.config.api_version {
+            url.query_pairs_mut()
+                .append_pair("api-version", api_version);
+        }
+
+        log::info!("Azure OpenAI stream HTTP Request {}", url);
+        let mut request = self
+            .client
+            .post(url)
+            .header("api-key", &self.config.api_key)
+            .json(&body);
+
+        if let Some(timeout) = self.config.timeout_seconds {
+            request = request.timeout(std::time::Duration::from_secs(timeout));
+        }
+
+        let response = request.send().await?;
+        log::debug!("Azure OpenAI stream HTTP status: {}", response.status());
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await?;
+            return Err(LLMError::ResponseFormatError {
+                message: format!("Azure OpenAI API returned error status: {status}"),
+                raw_response: error_text,
+            });
+        }
+
+        Ok(create_sse_stream(response, false))
+    }
+
+    async fn chat_stream_with_tools(
+        &self,
+        messages: &[ChatMessage],
+        tools: Option<&[Tool]>,
+    ) -> Result<
+        std::pin::Pin<Box<dyn futures::Stream<Item = Result<StreamChunk, LLMError>> + Send>>,
+        LLMError,
+    > {
+        crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
+        if self.config.api_key.is_empty() {
+            return Err(LLMError::AuthError(
+                "Missing Azure OpenAI API key".to_string(),
+            ));
+        }
+
+        let mut openai_msgs: Vec<AzureOpenAIChatMessage> = vec![];
+
+        for msg in messages {
+            if let MessageType::ToolResult(ref results) = msg.message_type {
+                for result in results {
+                    openai_msgs.push(AzureOpenAIChatMessage {
+                        role: "tool",
+                        tool_call_id: Some(result.id.clone()),
+                        tool_calls: None,
+                        content: Some(either::Right(result.function.arguments.clone())),
+                    });
+                }
+            } else {
+                openai_msgs.push(msg.into())
+            }
+        }
+
+        if let Some(system) = &self.config.system {
+            openai_msgs.insert(
+                0,
+                AzureOpenAIChatMessage {
+                    role: "system",
+                    content: Some(either::Left(vec![AzureMessageContent {
+                        message_type: Some("text"),
+                        text: Some(system),
+                        image_url: None,
+                        tool_call_id: None,
+                        tool_output: None,
+                    }])),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            );
+        }
+
+        let response_format: Option<OpenAIResponseFormat> =
+            self.config.json_schema.clone().map(|s| s.into());
+
+        let effective_tools = tools
+            .map(|t| t.to_vec())
+            .or_else(|| self.config.tools.clone());
+        let request_tool_choice = if effective_tools.is_some() {
+            self.config.tool_choice.clone()
+        } else {
+            None
+        };
+
+        let body = AzureOpenAIChatRequest {
+            model: &self.config.model,
+            messages: openai_msgs,
+            max_tokens: self.config.max_tokens,
+            temperature: self.config.temperature,
+            stream: true,
+            top_p: self.config.top_p,
+            top_k: self.config.top_k,
+            tools: effective_tools,
+            tool_choice: request_tool_choice,
+            reasoning_effort: self.config.reasoning_effort.clone(),
+            response_format,
+        };
+
+        let mut url = self
+            .config
+            .base_url
+            .join("chat/completions")
+            .map_err(|e| LLMError::HttpError(e.to_string()))?;
+
+        if let Some(api_version) = &self.config.api_version {
+            url.query_pairs_mut()
+                .append_pair("api-version", api_version);
+        }
+
+        let mut request = self
+            .client
+            .post(url)
+            .header("api-key", &self.config.api_key)
+            .json(&body);
+
+        if let Some(timeout) = self.config.timeout_seconds {
+            request = request.timeout(std::time::Duration::from_secs(timeout));
+        }
+
+        let response = request.send().await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await?;
+            return Err(LLMError::ResponseFormatError {
+                message: format!("Azure OpenAI API returned error status: {status}"),
+                raw_response: error_text,
+            });
+        }
+
+        Ok(create_azure_sse_stream_with_tools(response))
     }
 }
 
@@ -712,8 +1153,10 @@ impl EmbeddingProvider for AzureOpenAI {
             .join("embeddings")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.config.api_version);
+            if let Some(api_version) = &self.config.api_version {
+                url.query_pairs_mut()
+                    .append_pair("api-version", api_version);
+            }
 
         let resp = self
             .client
@@ -773,8 +1216,10 @@ impl ModelsProvider for AzureOpenAI {
             .join("models")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.config.api_version);
+            if let Some(api_version) = &self.config.api_version {
+                url.query_pairs_mut()
+                    .append_pair("api-version", api_version);
+            }
 
         let mut request = self.client.get(url).header("api-key", &self.config.api_key);
 
@@ -788,5 +1233,74 @@ impl ModelsProvider for AzureOpenAI {
             backend: LLMBackend::AzureOpenAI,
         };
         Ok(Box::new(result))
+    }
+}
+
+#[cfg(all(test, feature = "azure_openai"))]
+mod tests {
+    use super::*;
+    use reqwest::Client;
+
+    #[test]
+    fn parse_azure_stream_tool_only_deltas() {
+        let mut tool_states = HashMap::new();
+
+        let start = r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_abc123","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}"#;
+        let chunks = parse_azure_sse_chunk_with_tools(start, &mut tool_states).unwrap();
+        assert!(matches!(
+            &chunks[0],
+            StreamChunk::ToolUseStart { index: 0, id, name }
+            if id == "call_abc123" && name == "get_weather"
+        ));
+
+        let delta = r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\":\"Paris\"}"}}]},"finish_reason":null}]}"#;
+        let chunks = parse_azure_sse_chunk_with_tools(delta, &mut tool_states).unwrap();
+        assert!(matches!(
+            &chunks[0],
+            StreamChunk::ToolUseInputDelta { index: 0, partial_json }
+            if partial_json == "{\"city\":\"Paris\"}"
+        ));
+
+        let finish =
+            r#"data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#;
+        let chunks = parse_azure_sse_chunk_with_tools(finish, &mut tool_states).unwrap();
+        assert_eq!(chunks.len(), 2);
+        assert!(matches!(
+            &chunks[0],
+            StreamChunk::ToolUseComplete { index: 0, tool_call }
+            if tool_call.id == "call_abc123"
+                && tool_call.function.name == "get_weather"
+                && tool_call.function.arguments == "{\"city\":\"Paris\"}"
+        ));
+        assert!(matches!(
+            &chunks[1],
+            StreamChunk::Done { stop_reason } if stop_reason == "tool_use"
+        ));
+    }
+
+    #[test]
+    fn falls_back_to_deployment_id_when_model_is_unset() {
+        let client = AzureOpenAI::with_client(
+            Client::new(),
+            "test-key",
+            Some("2024-10-21".to_string()),
+            "my-deployment",
+            "https://example.openai.azure.com",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(client.config.model, "my-deployment");
     }
 }
