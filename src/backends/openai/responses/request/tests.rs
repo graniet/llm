@@ -27,6 +27,8 @@ fn base_config() -> OpenAICompatibleProviderConfig {
         embedding_encoding_format: None,
         embedding_dimensions: None,
         normalize_response: false,
+        headers: Vec::new(),
+        token_provider: None,
     }
 }
 
