@@ -13,7 +13,7 @@ pub(super) fn build_openai(
     tools: Option<Vec<Tool>>,
     tool_choice: Option<ToolChoice>,
 ) -> Result<Box<dyn LLMProvider>, LLMError> {
-    let key = helpers::require_api_key(state, "OpenAI")?;
+    let key = helpers::require_api_key_or_token(state, "OpenAI")?;
     let timeout = helpers::timeout_or_default(state);
 
     let provider = crate::backends::openai::OpenAI::new(
@@ -36,6 +36,7 @@ pub(super) fn build_openai(
         state.voice.take(),
         state.extra_body.take(),
         std::mem::take(&mut state.headers),
+        state.token_provider.take(),
         state.openai_enable_web_search,
         state.openai_web_search_context_size.take(),
         state.openai_web_search_user_location_type.take(),

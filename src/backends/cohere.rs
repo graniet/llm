@@ -2,7 +2,9 @@
 //!
 //! This module provides integration with Cohere's LLM models through their API.
 
-use crate::providers::openai_compatible::{OpenAICompatibleProvider, OpenAIProviderConfig};
+use crate::providers::openai_compatible::{
+    OpenAICompatibleProvider, OpenAIProviderConfig, TokenProviderFn,
+};
 use crate::{
     chat::{StructuredOutputFormat, Tool, ToolChoice},
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
@@ -56,6 +58,7 @@ impl Cohere {
         parallel_tool_calls: Option<bool>,
         normalize_response: Option<bool>,
         headers: Vec<(String, String)>,
+        token_provider: Option<TokenProviderFn>,
     ) -> Self {
         <OpenAICompatibleProvider<CohereConfig>>::new(
             api_key,
@@ -78,6 +81,7 @@ impl Cohere {
             embedding_encoding_format,
             embedding_dimensions,
             headers,
+            token_provider,
         )
     }
 }

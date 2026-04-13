@@ -13,7 +13,7 @@ pub(super) fn build_openrouter(
     tools: Option<Vec<Tool>>,
     tool_choice: Option<ToolChoice>,
 ) -> Result<Box<dyn LLMProvider>, LLMError> {
-    let api_key = helpers::require_api_key(state, "OpenRouter")?;
+    let api_key = helpers::require_api_key_or_token(state, "OpenRouter")?;
     let timeout = helpers::timeout_or_default(state);
     let provider = crate::backends::openrouter::OpenRouter::with_config(
         api_key,
@@ -35,6 +35,7 @@ pub(super) fn build_openrouter(
         state.enable_parallel_tool_use,
         state.normalize_response,
         std::mem::take(&mut state.headers),
+        state.token_provider.take(),
     );
     Ok(Box::new(provider))
 }

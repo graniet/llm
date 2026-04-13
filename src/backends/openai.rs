@@ -8,7 +8,7 @@ use crate::builder::LLMBackend;
 use crate::chat::Usage;
 use crate::providers::openai_compatible::{
     OpenAIChatMessage, OpenAICompatibleProvider, OpenAIProviderConfig, OpenAIResponseFormat,
-    OpenAIStreamOptions,
+    OpenAIStreamOptions, TokenProviderFn,
 };
 use crate::{
     chat::{
@@ -221,6 +221,7 @@ impl OpenAI {
         voice: Option<String>,
         extra_body: Option<serde_json::Value>,
         headers: Vec<(String, String)>,
+        token_provider: Option<TokenProviderFn>,
         enable_web_search: Option<bool>,
         web_search_context_size: Option<String>,
         web_search_user_location_type: Option<String>,
@@ -229,8 +230,10 @@ impl OpenAI {
         web_search_user_location_approximate_region: Option<String>,
     ) -> Result<Self, LLMError> {
         let api_key_str = api_key.into();
-        if api_key_str.is_empty() {
-            return Err(LLMError::AuthError("Missing OpenAI API key".to_string()));
+        if api_key_str.is_empty() && token_provider.is_none() {
+            return Err(LLMError::AuthError(
+                "Missing OpenAI credentials: provide an API key via `.api_key()` or a dynamic token provider via `.auth_provider()`".to_string(),
+            ));
         }
         Ok(OpenAI {
             provider: <OpenAICompatibleProvider<OpenAIConfig>>::new(
@@ -254,6 +257,7 @@ impl OpenAI {
                 embedding_encoding_format,
                 embedding_dimensions,
                 headers,
+                token_provider,
             ),
             enable_web_search: enable_web_search.unwrap_or(false),
             web_search_context_size,
@@ -442,11 +446,12 @@ impl SpeechToTextProvider for OpenAI {
             .text("response_format", RESPONSE_FORMAT)
             .part("file", part);
 
+        let token = self.provider.get_bearer_token().await?;
         let mut req = self
             .provider
             .client
             .post(url)
-            .bearer_auth(&self.provider.config.api_key)
+            .bearer_auth(&token)
             .multipart(form);
         req = self.provider.apply_headers(req);
 
@@ -477,11 +482,12 @@ impl SpeechToTextProvider for OpenAI {
             .await
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
+        let token = self.provider.get_bearer_token().await?;
         let mut req = self
             .provider
             .client
             .post(url)
-            .bearer_auth(&self.provider.config.api_key)
+            .bearer_auth(&token)
             .multipart(form);
         req = self.provider.apply_headers(req);
 
@@ -530,11 +536,12 @@ impl EmbeddingProvider for OpenAI {
             .join("embeddings")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
+        let token = self.provider.get_bearer_token().await?;
         let mut req = self
             .provider
             .client
             .post(url)
-            .bearer_auth(&self.provider.config.api_key)
+            .bearer_auth(&token)
             .json(&body);
         req = self.provider.apply_headers(req);
         let resp = req.send().await?.error_for_status()?;
@@ -558,11 +565,8 @@ impl ModelsProvider for OpenAI {
             .join("models")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
-        let mut req = self
-            .provider
-            .client
-            .get(url)
-            .bearer_auth(&self.provider.config.api_key);
+        let token = self.provider.get_bearer_token().await?;
+        let mut req = self.provider.client.get(url).bearer_auth(&token);
         req = self.provider.apply_headers(req);
         let resp = req.send().await?.error_for_status()?;
 
@@ -607,11 +611,12 @@ impl OpenAI {
         label: &str,
     ) -> Result<reqwest::Response, LLMError> {
         let url = self.responses_url()?;
+        let token = self.provider.get_bearer_token().await?;
         let mut request = self
             .provider
             .client
             .post(url)
-            .bearer_auth(&self.provider.config.api_key)
+            .bearer_auth(&token)
             .json(body);
         request = self.provider.apply_headers(request);
         self.log_request_payload(label, body);

@@ -20,9 +20,30 @@ use futures::{stream::Stream, StreamExt};
 use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
+
+/// Type alias for a dynamic async function that returns a bearer token.
+///
+/// Used by [`LLMBuilder::auth_provider`](crate::builder::LLMBuilder::auth_provider) to supply a
+/// callback that is invoked before every request to obtain (or refresh) the bearer token.
+pub type TokenProviderFn =
+    Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<String, LLMError>> + Send>> + Send + Sync>;
+
+/// Newtype wrapper around [`TokenProviderFn`] that implements [`Debug`] and [`Clone`].
+///
+/// Stored inside [`OpenAICompatibleProviderConfig`] so the config can continue to
+/// derive `Debug`.
+#[derive(Clone)]
+pub struct TokenProvider(pub TokenProviderFn);
+
+impl std::fmt::Debug for TokenProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TokenProvider(<async fn>)")
+    }
+}
 
 const AUDIO_UNSUPPORTED: &str = "Audio messages are not supported for this provider";
 
@@ -69,6 +90,9 @@ pub struct OpenAICompatibleProviderConfig {
     pub normalize_response: bool,
     /// User-supplied custom headers to attach to every request.
     pub headers: Vec<(String, String)>,
+    /// Optional async callback invoked before every request to obtain the bearer token.
+    /// When set, its return value is used instead of the static `api_key`.
+    pub token_provider: Option<TokenProvider>,
 }
 
 /// Generic OpenAI-compatible provider
@@ -350,6 +374,7 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
         embedding_encoding_format: Option<String>,
         embedding_dimensions: Option<u32>,
         headers: Vec<(String, String)>,
+        token_provider: Option<TokenProviderFn>,
     ) -> Self {
         let mut builder = Client::builder();
         if let Some(sec) = timeout_seconds {
@@ -378,6 +403,7 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
             embedding_encoding_format,
             embedding_dimensions,
             headers,
+            token_provider,
         )
     }
 
@@ -405,6 +431,7 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
         embedding_encoding_format: Option<String>,
         embedding_dimensions: Option<u32>,
         headers: Vec<(String, String)>,
+        token_provider: Option<TokenProviderFn>,
     ) -> Self {
         let extra_body = match extra_body {
             Some(serde_json::Value::Object(map)) => map,
@@ -437,6 +464,7 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
             embedding_encoding_format,
             embedding_dimensions,
             headers,
+            token_provider: token_provider.map(TokenProvider),
         };
         Self {
             config: Arc::new(config),
@@ -533,6 +561,18 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
         request
     }
 
+    /// Returns the bearer token for the current request.
+    ///
+    /// If a [`TokenProvider`] callback was configured via
+    /// [`LLMBuilder::auth_provider`](crate::builder::LLMBuilder::auth_provider), it is invoked and
+    /// its result is used. Otherwise the static `api_key` is returned.
+    pub async fn get_bearer_token(&self) -> Result<String, LLMError> {
+        match &self.config.token_provider {
+            Some(provider) => (provider.0)().await,
+            None => Ok(self.config.api_key.clone()),
+        }
+    }
+
     pub fn prepare_messages(&self, messages: &[ChatMessage]) -> Vec<OpenAIChatMessage<'_>> {
         let mut openai_msgs: Vec<OpenAIChatMessage> = messages
             .iter()
@@ -584,9 +624,9 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
         tools: Option<&[Tool]>,
     ) -> Result<Box<dyn ChatResponse>, LLMError> {
         crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
-        if self.config.api_key.is_empty() {
+        if self.config.api_key.is_empty() && self.config.token_provider.is_none() {
             return Err(LLMError::AuthError(format!(
-                "Missing {} API key",
+                "Missing {} credentials: provide an API key via `.api_key()` or a dynamic token provider via `.auth_provider()`",
                 T::PROVIDER_NAME
             )));
         }
@@ -635,11 +675,8 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
             .base_url
             .join(T::CHAT_ENDPOINT)
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
-        let mut request = self
-            .client
-            .post(url)
-            .bearer_auth(&self.config.api_key)
-            .json(&body);
+        let token = self.get_bearer_token().await?;
+        let mut request = self.client.post(url).bearer_auth(&token).json(&body);
         request = self.apply_headers(request);
         // Add custom headers if provider specifies them
         if let Some(headers) = T::custom_headers() {
@@ -716,9 +753,9 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
         LLMError,
     > {
         crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
-        if self.config.api_key.is_empty() {
+        if self.config.api_key.is_empty() && self.config.token_provider.is_none() {
             return Err(LLMError::AuthError(format!(
-                "Missing {} API key",
+                "Missing {} credentials: provide an API key via `.api_key()` or a dynamic token provider via `.auth_provider()`",
                 T::PROVIDER_NAME
             )));
         }
@@ -758,11 +795,8 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
             .base_url
             .join(T::CHAT_ENDPOINT)
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
-        let mut request = self
-            .client
-            .post(url)
-            .bearer_auth(&self.config.api_key)
-            .json(&body);
+        let token = self.get_bearer_token().await?;
+        let mut request = self.client.post(url).bearer_auth(&token).json(&body);
         request = self.apply_headers(request);
         if let Some(headers) = T::custom_headers() {
             for (key, value) in headers {
@@ -811,9 +845,9 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatStreamChunk, LLMError>> + Send>>, LLMError>
     {
         crate::chat::ensure_no_audio(messages, AUDIO_UNSUPPORTED)?;
-        if self.config.api_key.is_empty() {
+        if self.config.api_key.is_empty() && self.config.token_provider.is_none() {
             return Err(LLMError::AuthError(format!(
-                "Missing {} API key",
+                "Missing {} credentials: provide an API key via `.api_key()` or a dynamic token provider via `.auth_provider()`",
                 T::PROVIDER_NAME
             )));
         }
@@ -862,11 +896,8 @@ impl<T: OpenAIProviderConfig> ChatProvider for OpenAICompatibleProvider<T> {
             .join(T::CHAT_ENDPOINT)
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
-        let mut request = self
-            .client
-            .post(url)
-            .bearer_auth(&self.config.api_key)
-            .json(&body);
+        let token = self.get_bearer_token().await?;
+        let mut request = self.client.post(url).bearer_auth(&token).json(&body);
 
         request = self.apply_headers(request);
         if let Some(headers) = T::custom_headers() {

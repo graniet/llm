@@ -4,7 +4,9 @@
 
 use crate::builder::LLMBackend;
 use crate::models::{ModelListRequest, ModelListResponse, StandardModelListResponse};
-use crate::providers::openai_compatible::{OpenAICompatibleProvider, OpenAIProviderConfig};
+use crate::providers::openai_compatible::{
+    OpenAICompatibleProvider, OpenAIProviderConfig, TokenProviderFn,
+};
 use crate::{
     chat::{StructuredOutputFormat, Tool, ToolChoice},
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
@@ -56,6 +58,7 @@ impl Mistral {
         parallel_tool_calls: Option<bool>,
         normalize_response: Option<bool>,
         headers: Vec<(String, String)>,
+        token_provider: Option<TokenProviderFn>,
     ) -> Self {
         <OpenAICompatibleProvider<MistralConfig>>::new(
             api_key,
@@ -78,6 +81,7 @@ impl Mistral {
             embedding_encoding_format,
             embedding_dimensions,
             headers,
+            token_provider,
         )
     }
 }

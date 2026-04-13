@@ -1,3 +1,4 @@
+use crate::providers::openai_compatible::TokenProviderFn;
 use secrecy::SecretString;
 
 use crate::{
@@ -37,6 +38,7 @@ pub(crate) struct BuilderState {
     pub(crate) api_version: Option<String>,
     pub(crate) deployment_id: Option<String>,
     pub(crate) voice: Option<String>,
+    pub(crate) token_provider: Option<TokenProviderFn>,
     pub(crate) extra_body: Option<serde_json::Value>,
     pub(crate) xai_search_mode: Option<String>,
     pub(crate) xai_search_source_type: Option<String>,

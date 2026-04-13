@@ -9,7 +9,9 @@ use crate::{
     embedding::EmbeddingProvider,
     error::LLMError,
     models::{ModelListRequest, ModelListResponse, ModelsProvider, StandardModelListResponse},
-    providers::openai_compatible::{OpenAICompatibleProvider, OpenAIProviderConfig},
+    providers::openai_compatible::{
+        OpenAICompatibleProvider, OpenAIProviderConfig, TokenProviderFn,
+    },
     stt::SpeechToTextProvider,
     tts::TextToSpeechProvider,
     LLMProvider,
@@ -53,6 +55,7 @@ impl HuggingFace {
         parallel_tool_calls: Option<bool>,
         normalize_response: Option<bool>,
         headers: Vec<(String, String)>,
+        token_provider: Option<TokenProviderFn>,
     ) -> Self {
         OpenAICompatibleProvider::<HuggingFaceConfig>::new(
             api_key,
@@ -75,6 +78,7 @@ impl HuggingFace {
             None, // embedding_encoding_format
             None, // embedding_dimensions
             headers,
+            token_provider,
         )
     }
 }
