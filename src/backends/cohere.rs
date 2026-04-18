@@ -142,8 +142,10 @@ impl SpeechToTextProvider for Cohere {
 #[async_trait]
 impl EmbeddingProvider for Cohere {
     async fn embed(&self, input: Vec<String>) -> Result<Vec<Vec<f32>>, LLMError> {
-        if self.config.api_key.is_empty() {
-            return Err(LLMError::AuthError("Missing Cohere API key".into()));
+        if self.config.api_key.is_empty() && self.config.token_provider.is_none() {
+            return Err(LLMError::AuthError(
+                "Missing Cohere credentials: provide an API key via `.api_key()` or a dynamic token provider via `.auth_provider()`".into(),
+            ));
         }
 
         let body = CohereEmbeddingRequest {
@@ -163,10 +165,11 @@ impl EmbeddingProvider for Cohere {
             .join("embeddings")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
+        let token = self.get_bearer_token().await?;
         let resp = self
             .client
             .post(url)
-            .bearer_auth(&self.config.api_key)
+            .bearer_auth(&token)
             .json(&body)
             .send()
             .await?

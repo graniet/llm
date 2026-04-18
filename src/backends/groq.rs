@@ -139,16 +139,19 @@ impl ModelsProvider for Groq {
         &self,
         _request: Option<&ModelListRequest>,
     ) -> Result<Box<dyn ModelListResponse>, LLMError> {
-        if self.config.api_key.is_empty() {
-            return Err(LLMError::AuthError("Missing Groq API key".to_string()));
+        if self.config.api_key.is_empty() && self.config.token_provider.is_none() {
+            return Err(LLMError::AuthError(
+                "Missing Groq credentials: provide an API key via `.api_key()` or a dynamic token provider via `.auth_provider()`".to_string(),
+            ));
         }
 
         let url = format!("{}/models", GroqConfig::DEFAULT_BASE_URL);
 
+        let token = self.get_bearer_token().await?;
         let resp = self
             .client
             .get(&url)
-            .bearer_auth(&self.config.api_key)
+            .bearer_auth(&token)
             .send()
             .await?
             .error_for_status()?;

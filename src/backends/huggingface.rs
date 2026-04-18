@@ -125,18 +125,19 @@ impl ModelsProvider for HuggingFace {
         &self,
         _request: Option<&ModelListRequest>,
     ) -> Result<Box<dyn ModelListResponse>, LLMError> {
-        if self.config.api_key.is_empty() {
+        if self.config.api_key.is_empty() && self.config.token_provider.is_none() {
             return Err(LLMError::AuthError(
-                "Missing HuggingFace API key".to_string(),
+                "Missing HuggingFace credentials: provide an API key via `.api_key()` or a dynamic token provider via `.auth_provider()`".to_string(),
             ));
         }
 
         let url = format!("{}/models", HuggingFaceConfig::DEFAULT_BASE_URL);
 
+        let token = self.get_bearer_token().await?;
         let resp = self
             .client
             .get(&url)
-            .bearer_auth(&self.config.api_key)
+            .bearer_auth(&token)
             .send()
             .await?
             .error_for_status()?;
