@@ -53,6 +53,13 @@ pub fn to_chat_messages(messages: &[ConversationMessage]) -> Vec<ChatMessage> {
                 i += 1;
             }
             MessageKind::Text(content) => {
+                // Skip empty messages (placeholders that haven't been filled yet)
+                // These are typically assistant messages with Streaming or Pending state
+                if content.trim().is_empty() {
+                    i += 1;
+                    continue;
+                }
+
                 match message.role {
                     MessageRole::User => {
                         result.push(ChatMessage::user().content(content).build());

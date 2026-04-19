@@ -10,6 +10,7 @@ pub(super) fn handle_onboarding(state: &mut OnboardingState, key: KeyEvent) -> O
         OnboardingStep::Welcome => handle_onboarding_welcome(state, key),
         OnboardingStep::Provider => handle_onboarding_provider(state, key),
         OnboardingStep::ApiKey => handle_onboarding_key(state, key),
+        OnboardingStep::BaseUrl => handle_onboarding_base_url(state, key),
         OnboardingStep::Preferences => handle_onboarding_preferences(state, key),
         OnboardingStep::Confirm => handle_onboarding_confirm(state, key),
     }
@@ -72,6 +73,36 @@ fn handle_onboarding_key(state: &mut OnboardingState, key: KeyEvent) -> OverlayR
             } else {
                 state.next_step();
             }
+            OverlayResult::action(OverlayAction::Handled)
+        }
+        _ => OverlayResult::action(OverlayAction::None),
+    }
+}
+
+fn handle_onboarding_base_url(state: &mut OnboardingState, key: KeyEvent) -> OverlayResult {
+    match key.code {
+        KeyCode::Esc => {
+            state.prev_step();
+            OverlayResult::action(OverlayAction::Handled)
+        }
+        KeyCode::Backspace => {
+            state.error = None;
+            state.base_url.pop();
+            OverlayResult::action(OverlayAction::Handled)
+        }
+        KeyCode::Char(ch) => {
+            state.error = None;
+            state.base_url.push(ch);
+            OverlayResult::action(OverlayAction::Handled)
+        }
+        KeyCode::Enter => {
+            // If empty and a default exists, use the default
+            if state.base_url.trim().is_empty() {
+                if let Some(default_url) = state.default_base_url() {
+                    state.base_url = default_url.to_string();
+                }
+            }
+            state.next_step();
             OverlayResult::action(OverlayAction::Handled)
         }
         _ => OverlayResult::action(OverlayAction::None),

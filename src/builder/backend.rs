@@ -1,3 +1,5 @@
+use std::fmt::Formatter;
+
 use crate::error::LLMError;
 
 /// Supported LLM backend providers.
@@ -44,5 +46,28 @@ impl std::str::FromStr for LLMBackend {
                 "Unknown LLM backend: {s}"
             ))),
         }
+    }
+}
+
+impl std::fmt::Display for LLMBackend {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            LLMBackend::OpenAI => "openai",
+            LLMBackend::Anthropic => "anthropic",
+            LLMBackend::DeepSeek => "deepseek",
+            LLMBackend::XAI => "xai",
+            LLMBackend::Google => "google",
+            LLMBackend::Groq => "groq",
+            LLMBackend::AzureOpenAI => "azure-openai",
+            LLMBackend::Cohere => "cohere",
+            LLMBackend::Mistral => "mistral",
+            LLMBackend::OpenRouter => "openrouter",
+            LLMBackend::HuggingFace => "huggingface",
+            LLMBackend::Ollama => "ollama",
+            LLMBackend::Phind => "phind",
+            LLMBackend::ElevenLabs => "elevenlabs",
+            LLMBackend::AwsBedrock => "aws-bedrock",
+        };
+        write!(f, "{name}")
     }
 }
