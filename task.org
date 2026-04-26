@@ -1,0 +1,8 @@
+
+#+begin_src sh
+#  ~/gemini/bundle/gemini.js  --model gemini-2.5-flash --checkpointing --include-directories ~/nix --debug --prompt  ~/nix/current-month/25/llm/task.md
+  ~/gemini/bundle/gemini.js  --model gemini-2.5-flash --checkpointing --include-directories ~/nix --debug --prompt  ~/nix/current-month/25/llm/task.dm
+#+end_src
+
+
+
