@@ -4,7 +4,9 @@
 
 use crate::builder::LLMBackend;
 use crate::models::{ModelListRequest, ModelListResponse, StandardModelListResponse};
-use crate::providers::openai_compatible::{OpenAICompatibleProvider, OpenAIProviderConfig};
+use crate::providers::openai_compatible::{
+    OpenAICompatibleProvider, OpenAIProviderConfig, TokenProviderFn,
+};
 use crate::{
     chat::{StructuredOutputFormat, Tool, ToolChoice},
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
@@ -55,6 +57,8 @@ impl Mistral {
         json_schema: Option<StructuredOutputFormat>,
         parallel_tool_calls: Option<bool>,
         normalize_response: Option<bool>,
+        headers: Vec<(String, String)>,
+        token_provider: Option<TokenProviderFn>,
     ) -> Self {
         <OpenAICompatibleProvider<MistralConfig>>::new(
             api_key,
@@ -76,6 +80,8 @@ impl Mistral {
             normalize_response,
             embedding_encoding_format,
             embedding_dimensions,
+            headers,
+            token_provider,
         )
     }
 }
@@ -136,8 +142,10 @@ impl SpeechToTextProvider for Mistral {
 #[async_trait]
 impl EmbeddingProvider for Mistral {
     async fn embed(&self, input: Vec<String>) -> Result<Vec<Vec<f32>>, LLMError> {
-        if self.config.api_key.is_empty() {
-            return Err(LLMError::AuthError("Missing Mistral API key".into()));
+        if self.config.api_key.is_empty() && self.config.token_provider.is_none() {
+            return Err(LLMError::AuthError(
+                "Missing Mistral credentials: provide an API key via `.api_key()` or a dynamic token provider via `.auth_provider()`".into(),
+            ));
         }
 
         let body = MistralEmbeddingRequest {
@@ -157,10 +165,11 @@ impl EmbeddingProvider for Mistral {
             .join("embeddings")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
+        let token = self.get_bearer_token().await?;
         let resp = self
             .client
             .post(url)
-            .bearer_auth(&self.config.api_key)
+            .bearer_auth(&token)
             .json(&body)
             .send()
             .await?
@@ -178,14 +187,18 @@ impl ModelsProvider for Mistral {
         &self,
         _request: Option<&ModelListRequest>,
     ) -> Result<Box<dyn ModelListResponse>, LLMError> {
-        if self.config.api_key.is_empty() {
-            return Err(LLMError::AuthError("Missing Mistral API key".to_string()));
+        if self.config.api_key.is_empty() && self.config.token_provider.is_none() {
+            return Err(LLMError::AuthError(
+                "Missing Mistral credentials: provide an API key via `.api_key()` or a dynamic token provider via `.auth_provider()`".to_string(),
+            ));
         }
         let url = format!("{}models", MistralConfig::DEFAULT_BASE_URL);
+
+        let token = self.get_bearer_token().await?;
         let resp = self
             .client
             .get(&url)
-            .bearer_auth(&self.config.api_key)
+            .bearer_auth(&token)
             .send()
             .await?
             .error_for_status()?;
@@ -206,3 +219,4 @@ impl TextToSpeechProvider for Mistral {
         ))
     }
 }
+

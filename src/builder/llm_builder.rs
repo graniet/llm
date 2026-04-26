@@ -1,6 +1,11 @@
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+
 use secrecy::SecretString;
 
 use crate::chat::ReasoningEffort;
+use crate::error::LLMError;
 
 use super::{backend::LLMBackend, state::BuilderState};
 
@@ -109,6 +114,32 @@ impl LLMBuilder {
     /// Sets the top_k sampling parameter.
     pub fn top_k(mut self, top_k: u32) -> Self {
         self.state.top_k = Some(top_k);
+        self
+    }
+
+    /// Adds a custom HTTP header to every request for OpenAI-compatible backends.
+    ///
+    /// Can be called multiple times to add multiple headers.
+    pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.state.headers.push((key.into(), value.into()));
+        self
+    }
+
+    /// Sets an async callback that is invoked before every request to obtain
+    /// (or refresh) the bearer token for OpenAI-compatible backends.
+    ///
+    /// When set, the callback replaces the static API key supplied via
+    /// [`.api_key()`](Self::api_key) — you may omit `.api_key()` entirely.
+    /// The callback is called once per request, so it can perform token
+    /// exchange or refresh on every call without any extra coordination.
+    pub fn auth_provider<F, Fut>(mut self, f: F) -> Self
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<String, LLMError>> + Send + 'static,
+    {
+        self.state.token_provider = Some(Arc::new(move || {
+            Box::pin(f()) as Pin<Box<dyn Future<Output = Result<String, LLMError>> + Send>>
+        }));
         self
     }
 }

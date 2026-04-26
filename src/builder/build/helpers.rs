@@ -62,6 +62,22 @@ pub(super) fn require_api_key(
     Ok(key.expose_secret().to_string())
 }
 
+/// Like [`require_api_key`], but succeeds with an empty string when a
+/// [`TokenProviderFn`] has been configured on the builder state.
+///
+/// Use this in every OpenAI-compatible backend builder so that callers who
+/// supply `.auth_provider(...)` don't also have to supply a static API key.
+pub(super) fn require_api_key_or_token(
+    state: &mut BuilderState,
+    provider: &str,
+) -> Result<String, LLMError> {
+    if state.token_provider.is_some() {
+        Ok(optional_api_key(state).unwrap_or_default())
+    } else {
+        require_api_key(state, provider)
+    }
+}
+
 pub(super) fn optional_api_key(state: &mut BuilderState) -> Option<String> {
     state
         .api_key

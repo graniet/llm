@@ -9,7 +9,9 @@ use crate::{
     embedding::EmbeddingProvider,
     error::LLMError,
     models::{ModelListRequest, ModelListResponse, ModelsProvider, StandardModelListResponse},
-    providers::openai_compatible::{OpenAICompatibleProvider, OpenAIProviderConfig},
+    providers::openai_compatible::{
+        OpenAICompatibleProvider, OpenAIProviderConfig, TokenProviderFn,
+    },
     stt::SpeechToTextProvider,
     tts::TextToSpeechProvider,
     LLMProvider,
@@ -52,6 +54,8 @@ impl HuggingFace {
         json_schema: Option<StructuredOutputFormat>,
         parallel_tool_calls: Option<bool>,
         normalize_response: Option<bool>,
+        headers: Vec<(String, String)>,
+        token_provider: Option<TokenProviderFn>,
     ) -> Self {
         OpenAICompatibleProvider::<HuggingFaceConfig>::new(
             api_key,
@@ -73,6 +77,8 @@ impl HuggingFace {
             normalize_response,
             None, // embedding_encoding_format
             None, // embedding_dimensions
+            headers,
+            token_provider,
         )
     }
 }
@@ -119,18 +125,19 @@ impl ModelsProvider for HuggingFace {
         &self,
         _request: Option<&ModelListRequest>,
     ) -> Result<Box<dyn ModelListResponse>, LLMError> {
-        if self.config.api_key.is_empty() {
+        if self.config.api_key.is_empty() && self.config.token_provider.is_none() {
             return Err(LLMError::AuthError(
-                "Missing HuggingFace API key".to_string(),
+                "Missing HuggingFace credentials: provide an API key via `.api_key()` or a dynamic token provider via `.auth_provider()`".to_string(),
             ));
         }
 
         let url = format!("{}/models", HuggingFaceConfig::DEFAULT_BASE_URL);
 
+        let token = self.get_bearer_token().await?;
         let resp = self
             .client
             .get(&url)
-            .bearer_auth(&self.config.api_key)
+            .bearer_auth(&token)
             .send()
             .await?
             .error_for_status()?;

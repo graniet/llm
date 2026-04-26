@@ -1,3 +1,4 @@
+use crate::providers::openai_compatible::TokenProviderFn;
 use secrecy::SecretString;
 
 use crate::{
@@ -21,6 +22,7 @@ pub(crate) struct BuilderState {
     pub(crate) timeout_seconds: Option<u64>,
     pub(crate) top_p: Option<f32>,
     pub(crate) top_k: Option<u32>,
+    pub(crate) headers: Vec<(String, String)>,
     pub(crate) embedding_encoding_format: Option<String>,
     pub(crate) embedding_dimensions: Option<u32>,
     pub(crate) validator: Option<Box<ValidatorFn>>,
@@ -36,6 +38,7 @@ pub(crate) struct BuilderState {
     pub(crate) api_version: Option<String>,
     pub(crate) deployment_id: Option<String>,
     pub(crate) voice: Option<String>,
+    pub(crate) token_provider: Option<TokenProviderFn>,
     pub(crate) extra_body: Option<serde_json::Value>,
     pub(crate) xai_search_mode: Option<String>,
     pub(crate) xai_search_source_type: Option<String>,

@@ -13,7 +13,7 @@ pub(super) fn build_cohere(
     tools: Option<Vec<Tool>>,
     tool_choice: Option<ToolChoice>,
 ) -> Result<Box<dyn LLMProvider>, LLMError> {
-    let api_key = helpers::require_api_key(state, "Cohere")?;
+    let api_key = helpers::require_api_key_or_token(state, "Cohere")?;
     let timeout = helpers::timeout_or_default(state);
     let provider = crate::backends::cohere::Cohere::new(
         api_key,
@@ -35,6 +35,8 @@ pub(super) fn build_cohere(
         state.normalize_response,
         state.embedding_encoding_format.take(),
         state.embedding_dimensions,
+        std::mem::take(&mut state.headers),
+        state.token_provider.take(),
     );
     Ok(Box::new(provider))
 }
