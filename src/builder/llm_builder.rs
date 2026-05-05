@@ -1,3 +1,5 @@
+#[cfg(feature = "google")]
+use crate::backends::google::GoogleServiceTier;
 use secrecy::SecretString;
 
 use crate::chat::ReasoningEffort;
@@ -109,6 +111,16 @@ impl LLMBuilder {
     /// Sets the top_k sampling parameter.
     pub fn top_k(mut self, top_k: u32) -> Self {
         self.state.top_k = Some(top_k);
+        self
+    }
+
+    /// Sets the Google service tier (standard, flex, or priority).
+    ///
+    /// Only applies when using the Google backend. Controls the cost/latency/reliability
+    /// tradeoff. See [`GoogleServiceTier`] for details.
+    #[cfg(feature = "google")]
+    pub fn google_service_tier(mut self, service_tier: GoogleServiceTier) -> Self {
+        self.state.google_service_tier = Some(service_tier);
         self
     }
 }

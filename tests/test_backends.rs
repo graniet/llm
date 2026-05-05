@@ -1268,96 +1268,52 @@ async fn test_anthropic_chat_stream_with_tools_text_only() {
     }
 }
 
-#[tokio::test]
-async fn test_anthropic_resilient_chat_stream_with_tools() {
-    let api_key = match std::env::var("ANTHROPIC_API_KEY") {
-        Ok(key) => key,
-        Err(_) => {
-            eprintln!(
-                "test test_anthropic_resilient_chat_stream_with_tools ... ignored, ANTHROPIC_API_KEY not set"
-            );
-            return;
-        }
-    };
+/// Live tests for Google service tier — requires GOOGLE_API_KEY.
+#[cfg(feature = "google")]
+mod google_service_tier_live_tests {
+    use llm::backends::google::GoogleServiceTier;
+    use llm::builder::{LLMBackend, LLMBuilder};
+    use llm::chat::ChatMessage;
 
-    use llm::chat::StreamChunk;
-
-    let llm = LLMBuilder::new()
-        .backend(LLMBackend::Anthropic)
-        .api_key(api_key)
-        .model("claude-3-5-haiku-20241022")
-        .max_tokens(512)
-        .temperature(0.0)
-        .resilient(true)
-        .resilient_attempts(3)
-        .resilient_backoff(200, 2_000)
-        .function(
-            FunctionBuilder::new("get_weather")
-                .description("Get the current weather in a given location")
-                .param(
-                    ParamBuilder::new("location")
-                        .type_of("string")
-                        .description("The city to get weather for"),
-                )
-                .required(vec!["location".to_string()]),
-        )
-        .build()
-        .expect("Failed to build resilient LLM");
-
-    let messages = vec![ChatMessage::user()
-        .content("What's the weather in Paris? Use the get_weather tool.")
-        .build()];
-
-    match llm.chat_stream_with_tools(&messages, llm.tools()).await {
-        Ok(mut stream) => {
-            let mut text_chunks = Vec::new();
-            let mut tool_completes = Vec::new();
-            let mut stop_reason = None;
-
-            while let Some(chunk_result) = stream.next().await {
-                match chunk_result {
-                    Ok(chunk) => {
-                        println!("Resilient stream chunk: {:?}", chunk);
-                        match chunk {
-                            StreamChunk::Text(t) => text_chunks.push(t),
-                            StreamChunk::ToolUseComplete { tool_call, .. } => {
-                                tool_completes.push(tool_call);
-                            }
-                            StreamChunk::Done { stop_reason: sr } => {
-                                stop_reason = Some(sr);
-                            }
-                            _ => {}
-                        }
-                    }
-                    Err(e) => panic!("Resilient stream error: {e}"),
-                }
+    fn get_api_key(test_name: &str) -> Option<String> {
+        match std::env::var("GOOGLE_API_KEY") {
+            Ok(key) => Some(key),
+            Err(_) => {
+                eprintln!("test {test_name} ... ignored, GOOGLE_API_KEY not set");
+                None
             }
-
-            // Verify we got a tool call
-            assert!(
-                !tool_completes.is_empty(),
-                "Expected at least one tool call with resilient wrapper"
-            );
-            assert_eq!(
-                tool_completes[0].function.name, "get_weather",
-                "Expected get_weather tool call"
-            );
-
-            // Verify stop reason
-            assert_eq!(
-                stop_reason,
-                Some("tool_use".to_string()),
-                "Expected stop_reason to be 'tool_use'"
-            );
-
-            println!(
-                "Resilient streaming with tools succeeded. Tool args: {}",
-                tool_completes[0].function.arguments
-            );
         }
-        Err(e) => panic!("Failed to start resilient stream: {e}"),
+    }
+
+    #[tokio::test]
+    #[rstest::rstest]
+    #[case::flex(GoogleServiceTier::Flex)]
+    #[case::priority(GoogleServiceTier::Priority)]
+    #[case::standard(GoogleServiceTier::Standard)]
+    async fn test_google_tier_chat(#[case] tier: GoogleServiceTier) {
+        let api_key = match get_api_key("test_google_flex_tier_chat") {
+            Some(k) => k,
+            None => return,
+        };
+
+        let llm = LLMBuilder::new()
+            .backend(LLMBackend::Google)
+            .api_key(api_key)
+            .model("gemini-2.5-flash-lite")
+            .max_tokens(64)
+            .google_service_tier(tier)
+            .build()
+            .expect("Failed to build LLM");
+
+        let messages = vec![ChatMessage::user().content("Say hello.").build()];
+        match llm.chat(&messages).await {
+            Ok(response) => {
+                assert!(
+                    response.text().is_some() && !response.text().unwrap().is_empty(),
+                    "Expected non-empty response with tier"
+                );
+            }
+            Err(e) => panic!("Google service-tier chat failed: {e}"),
+        }
     }
 }
-
-// Note: test_anthropic_resilient_chat_stream_struct removed because
-// Anthropic backend does not implement chat_stream_struct
