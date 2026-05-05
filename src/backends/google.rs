@@ -64,6 +64,39 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Service tier for Google Gemini inference.
+///
+/// Controls the cost/latency/reliability tradeoff of the request.
+/// See <https://ai.google.dev/gemini-api/docs/flex-inference> and
+/// <https://ai.google.dev/gemini-api/docs/priority-inference>.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GoogleServiceTier {
+    /// Standard tier (default). Full price, seconds-to-minutes latency.
+    Standard,
+    /// Flex tier. 50% cost reduction, best-effort availability, minutes latency.
+    /// Ideal for latency-tolerant background workloads.
+    Flex,
+    /// Priority tier. 75-100% more than standard, lowest latency, non-sheddable.
+    /// Designed for business-critical, interactive workloads.
+    Priority,
+}
+
+impl GoogleServiceTier {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Flex => "flex",
+            Self::Priority => "priority",
+        }
+    }
+}
+
+impl Serialize for GoogleServiceTier {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
 /// Configuration for the Google Gemini client.
 #[derive(Debug)]
 pub struct GoogleConfig {
@@ -87,6 +120,8 @@ pub struct GoogleConfig {
     pub json_schema: Option<StructuredOutputFormat>,
     /// Available tools for the model to use.
     pub tools: Option<Vec<Tool>>,
+    /// Service tier for inference (standard, flex, or priority).
+    pub service_tier: Option<GoogleServiceTier>,
 }
 
 /// Client for interacting with Google's Gemini API.
@@ -115,6 +150,9 @@ struct GoogleChatRequest<'a> {
     /// Tools that the model can use
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<GoogleTool>>,
+    /// Service tier ("standard", "flex", or "priority")
+    #[serde(skip_serializing_if = "Option::is_none", rename = "service_tier")]
+    service_tier: Option<&'a GoogleServiceTier>,
 }
 
 /// Individual message in a chat conversation
@@ -491,6 +529,7 @@ impl Google {
     /// * `top_k` - Top-k sampling parameter
     /// * `json_schema` - JSON schema for structured output
     /// * `tools` - Function tools that the model can use
+    /// * `service_tier` - Service tier for inference (standard, flex, or priority)
     ///
     /// # Returns
     ///
@@ -507,6 +546,7 @@ impl Google {
         top_k: Option<u32>,
         json_schema: Option<StructuredOutputFormat>,
         tools: Option<Vec<Tool>>,
+        service_tier: Option<GoogleServiceTier>,
     ) -> Self {
         let mut builder = Client::builder();
         if let Some(sec) = timeout_seconds {
@@ -524,6 +564,7 @@ impl Google {
             top_k,
             json_schema,
             tools,
+            service_tier,
         )
     }
 
@@ -541,6 +582,7 @@ impl Google {
         top_k: Option<u32>,
         json_schema: Option<StructuredOutputFormat>,
         tools: Option<Vec<Tool>>,
+        service_tier: Option<GoogleServiceTier>,
     ) -> Self {
         Self {
             config: Arc::new(GoogleConfig {
@@ -554,6 +596,7 @@ impl Google {
                 top_k,
                 json_schema,
                 tools,
+                service_tier,
             }),
             client,
         }
@@ -597,6 +640,10 @@ impl Google {
 
     pub fn tools(&self) -> Option<&[Tool]> {
         self.config.tools.as_deref()
+    }
+
+    pub fn service_tier(&self) -> Option<&GoogleServiceTier> {
+        self.config.service_tier.as_ref()
     }
 
     pub fn client(&self) -> &Client {
@@ -732,6 +779,7 @@ impl ChatProvider for Google {
             contents: chat_contents,
             generation_config,
             tools: None,
+            service_tier: self.config.service_tier.as_ref(),
         };
         if log::log_enabled!(log::Level::Trace) {
             if let Ok(json) = serde_json::to_string(&req_body) {
@@ -905,6 +953,7 @@ impl ChatProvider for Google {
             contents: chat_contents,
             generation_config,
             tools: google_tools,
+            service_tier: self.config.service_tier.as_ref(),
         };
 
         if log::log_enabled!(log::Level::Trace) {
@@ -1057,6 +1106,7 @@ impl ChatProvider for Google {
             contents: chat_contents,
             generation_config,
             tools: None,
+            service_tier: self.config.service_tier.as_ref(),
         };
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse&key={key}",

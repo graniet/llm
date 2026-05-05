@@ -1361,3 +1361,53 @@ async fn test_anthropic_resilient_chat_stream_with_tools() {
 
 // Note: test_anthropic_resilient_chat_stream_struct removed because
 // Anthropic backend does not implement chat_stream_struct
+
+/// Live tests for Google service tier — requires GOOGLE_API_KEY.
+#[cfg(feature = "google")]
+mod google_service_tier_live_tests {
+    use llm::backends::google::GoogleServiceTier;
+    use llm::builder::{LLMBackend, LLMBuilder};
+    use llm::chat::ChatMessage;
+
+    fn get_api_key(test_name: &str) -> Option<String> {
+        match std::env::var("GOOGLE_API_KEY") {
+            Ok(key) => Some(key),
+            Err(_) => {
+                eprintln!("test {test_name} ... ignored, GOOGLE_API_KEY not set");
+                None
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[rstest::rstest]
+    #[case::flex(GoogleServiceTier::Flex)]
+    #[case::priority(GoogleServiceTier::Priority)]
+    #[case::standard(GoogleServiceTier::Standard)]
+    async fn test_google_tier_chat(#[case] tier: GoogleServiceTier) {
+        let api_key = match get_api_key("test_google_flex_tier_chat") {
+            Some(k) => k,
+            None => return,
+        };
+
+        let llm = LLMBuilder::new()
+            .backend(LLMBackend::Google)
+            .api_key(api_key)
+            .model("gemini-2.5-flash-lite")
+            .max_tokens(64)
+            .google_service_tier(tier)
+            .build()
+            .expect("Failed to build LLM");
+
+        let messages = vec![ChatMessage::user().content("Say hello.").build()];
+        match llm.chat(&messages).await {
+            Ok(response) => {
+                assert!(
+                    response.text().is_some() && !response.text().unwrap().is_empty(),
+                    "Expected non-empty response with tier"
+                );
+            }
+            Err(e) => panic!("Google service-tier chat failed: {e}"),
+        }
+    }
+}
