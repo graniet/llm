@@ -1417,12 +1417,22 @@ mod google_service_tier_live_tests {
             Some(k) => k,
             None => return,
         };
-        let project_id = std::env::var("GOOGLE_PROJECT_ID").unwrap();
+        let project_id = match std::env::var("GOOGLE_PROJECT_ID").ok() {
+            Some(project_id) => project_id,
+            None => {
+                return eprintln!(
+                "test test_google_enterprise_agent_platform ... ignored, GOOGLE_PROJECT_ID not set"
+            )
+            }
+        };
 
         let llm = LLMBuilder::new()
             .backend(LLMBackend::Google)
             .google_platform(
-                llm::backends::google::GooglePlatform::GeminiEnterpriseAgent(project_id),
+                llm::backends::google::GooglePlatform::GeminiEnterpriseAgent {
+                    project_id,
+                    region: None,
+                },
             )
             .api_key(api_key)
             .model("gemini-2.5-flash-lite")

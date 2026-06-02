@@ -97,12 +97,16 @@ impl Serialize for GoogleServiceTier {
     }
 }
 
-type GoogleProjectId = String;
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum GooglePlatform {
     #[default]
     GoogleAiStudio,
-    GeminiEnterpriseAgent(GoogleProjectId),
+    GeminiEnterpriseAgent {
+        /// Google Cloud project ID for Gemini Enterprise Agent.
+        project_id: String,
+        /// Google Cloud region (e.g., "us-central1"). Optional, defaults to "global" if not specified.
+        region: Option<String>,
+    },
 }
 
 impl GooglePlatform {
@@ -111,8 +115,11 @@ impl GooglePlatform {
             Self::GoogleAiStudio => {
                 "https://generativelanguage.googleapis.com/v1beta/models".to_owned()
             }
-            Self::GeminiEnterpriseAgent(project_id) => {
-                format!("https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models")
+            Self::GeminiEnterpriseAgent { project_id, region } => {
+                format!(
+                    "https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/{region}/publishers/google/models",
+                    region = region.as_deref().unwrap_or("global")
+                )
             }
         }
     }
