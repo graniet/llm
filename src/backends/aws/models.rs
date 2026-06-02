@@ -232,9 +232,26 @@ impl BedrockModel {
             }
         }
 
-        // Try to match against direct models
+        // Try to match against direct models (exact match first)
         if let Some(direct) = DirectModel::from_id(&id) {
             return Self::Direct(direct);
+        }
+
+        // Try stripping a geo inference-profile prefix and retrying.
+        // IDs like "us.amazon.nova-pro-v1:0", "eu.amazon.nova-lite-v1:0", or a future
+        // "sa.amazon.nova-pro-v1:0" are functionally identical to the unprefixed form
+        // for capability checks. We detect the prefix by looking for a short all-alpha
+        // segment before the first dot (geo codes are 2-3 chars; vendor names are longer).
+        if let Some(dot) = id.find('.') {
+            let prefix = &id[..dot];
+            if !prefix.is_empty()
+                && prefix.len() <= 3
+                && prefix.chars().all(|c| c.is_ascii_alphabetic())
+            {
+                if let Some(direct) = DirectModel::from_id(&id[dot + 1..]) {
+                    return Self::Direct(direct);
+                }
+            }
         }
 
         // Otherwise treat as custom
@@ -871,6 +888,59 @@ mod tests {
             model,
             BedrockModel::Direct(DirectModel::NovaMicroV1)
         ));
+    }
+
+    #[test]
+    fn test_nova_geo_prefixed_from_id() {
+        // Geo-prefixed inference profile IDs must resolve to the same Direct variant
+        // so that capability checks (NativeStructuredOutput, ToolUse, etc.) work correctly.
+        // Includes a hypothetical future prefix ("sa") to verify we don't rely on an
+        // enumerated allowlist.
+        for prefix in ["us.", "eu.", "ap.", "sa."] {
+            let id = format!("{}amazon.nova-pro-v1:0", prefix);
+            assert!(
+                matches!(
+                    BedrockModel::from_id(&id),
+                    BedrockModel::Direct(DirectModel::NovaProV1)
+                ),
+                "{id} should resolve to NovaProV1"
+            );
+
+            let id = format!("{}amazon.nova-lite-v1:0", prefix);
+            assert!(
+                matches!(
+                    BedrockModel::from_id(&id),
+                    BedrockModel::Direct(DirectModel::NovaLiteV1)
+                ),
+                "{id} should resolve to NovaLiteV1"
+            );
+
+            let id = format!("{}amazon.nova-micro-v1:0", prefix);
+            assert!(
+                matches!(
+                    BedrockModel::from_id(&id),
+                    BedrockModel::Direct(DirectModel::NovaMicroV1)
+                ),
+                "{id} should resolve to NovaMicroV1"
+            );
+        }
+    }
+
+    #[test]
+    fn test_nova_geo_prefixed_native_structured_output_capability() {
+        // The whole point of the fix: geo-prefixed Nova IDs must report
+        // NativeStructuredOutput = true so prepare_chat_request uses outputConfig.textFormat.
+        for id in [
+            "us.amazon.nova-pro-v1:0",
+            "eu.amazon.nova-lite-v1:0",
+            "ap.amazon.nova-micro-v1:0",
+        ] {
+            let model = BedrockModel::from_id(id);
+            assert!(
+                model.supports(ModelCapability::NativeStructuredOutput),
+                "{id} should support NativeStructuredOutput"
+            );
+        }
     }
 
     #[test]
