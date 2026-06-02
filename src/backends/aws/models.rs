@@ -79,6 +79,16 @@ pub enum DirectModel {
     #[serde(rename = "amazon.titan-embed-text-v1")]
     TitanEmbedV1,
 
+    // Amazon Nova models
+    #[serde(rename = "amazon.nova-pro-v1:0")]
+    NovaProV1,
+
+    #[serde(rename = "amazon.nova-lite-v1:0")]
+    NovaLiteV1,
+
+    #[serde(rename = "amazon.nova-micro-v1:0")]
+    NovaMicroV1,
+
     // Cohere models
     #[serde(rename = "cohere.command-r-plus-v1:0")]
     CohereCommandRPlus,
@@ -121,6 +131,16 @@ pub enum CrossRegionModel {
 
     #[serde(rename = "claude-3-haiku-20240307-v1:0")]
     ClaudeHaiku3,
+
+    // Amazon Nova models
+    #[serde(rename = "nova-pro-v1:0")]
+    NovaProV1,
+
+    #[serde(rename = "nova-lite-v1:0")]
+    NovaLiteV1,
+
+    #[serde(rename = "nova-micro-v1:0")]
+    NovaMicroV1,
 
     // Mistral models
     #[serde(rename = "pixtral-large-2502-v1:0")]
@@ -305,6 +325,9 @@ impl DirectModel {
             Self::TitanTextLite => "amazon.titan-text-lite-v1",
             Self::TitanEmbedV2 => "amazon.titan-embed-text-v2:0",
             Self::TitanEmbedV1 => "amazon.titan-embed-text-v1",
+            Self::NovaProV1 => "amazon.nova-pro-v1:0",
+            Self::NovaLiteV1 => "amazon.nova-lite-v1:0",
+            Self::NovaMicroV1 => "amazon.nova-micro-v1:0",
             Self::CohereCommandRPlus => "cohere.command-r-plus-v1:0",
             Self::CohereCommandR => "cohere.command-r-v1:0",
             Self::CohereEmbedV3 => "cohere.embed-english-v3",
@@ -333,6 +356,9 @@ impl DirectModel {
             "amazon.titan-text-lite-v1" => Some(Self::TitanTextLite),
             "amazon.titan-embed-text-v2:0" => Some(Self::TitanEmbedV2),
             "amazon.titan-embed-text-v1" => Some(Self::TitanEmbedV1),
+            "amazon.nova-pro-v1:0" => Some(Self::NovaProV1),
+            "amazon.nova-lite-v1:0" => Some(Self::NovaLiteV1),
+            "amazon.nova-micro-v1:0" => Some(Self::NovaMicroV1),
             "cohere.command-r-plus-v1:0" => Some(Self::CohereCommandRPlus),
             "cohere.command-r-v1:0" => Some(Self::CohereCommandR),
             "cohere.embed-english-v3" => Some(Self::CohereEmbedV3),
@@ -353,6 +379,9 @@ impl CrossRegionModel {
             Self::ClaudeOpus3 => "claude-3-opus-20240229-v1:0",
             Self::ClaudeSonnet35 => "claude-3-5-sonnet-20240620-v1:0",
             Self::ClaudeHaiku3 => "claude-3-haiku-20240307-v1:0",
+            Self::NovaProV1 => "nova-pro-v1:0",
+            Self::NovaLiteV1 => "nova-lite-v1:0",
+            Self::NovaMicroV1 => "nova-micro-v1:0",
             Self::MistralPixtralLarge => "pixtral-large-2502-v1:0",
             Self::CohereEmbedV4 => "embed-v4:0",
         }
@@ -366,6 +395,7 @@ impl CrossRegionModel {
             | Self::ClaudeOpus3
             | Self::ClaudeSonnet35
             | Self::ClaudeHaiku3 => "anthropic",
+            Self::NovaProV1 | Self::NovaLiteV1 | Self::NovaMicroV1 => "amazon",
             Self::MistralPixtralLarge => "mistral",
             Self::CohereEmbedV4 => "cohere",
         }
@@ -387,6 +417,9 @@ impl CrossRegionModel {
                 Some(Self::ClaudeSonnet35)
             }
             ("anthropic", id) if id.contains("claude-3-haiku") => Some(Self::ClaudeHaiku3),
+            ("amazon", id) if id.contains("nova-pro") => Some(Self::NovaProV1),
+            ("amazon", id) if id.contains("nova-lite") => Some(Self::NovaLiteV1),
+            ("amazon", id) if id.contains("nova-micro") => Some(Self::NovaMicroV1),
             ("mistral", id) if id.contains("pixtral-large") => Some(Self::MistralPixtralLarge),
             ("cohere", id) if id.contains("embed-v4") => Some(Self::CohereEmbedV4),
             _ => None,
@@ -413,6 +446,9 @@ impl BedrockModel {
             ModelCapability::Vision => self.supports_vision_impl(),
             ModelCapability::ToolUse => self.supports_tools_impl(),
             ModelCapability::Streaming => self.is_text_model() || self.is_chat_model(),
+            ModelCapability::NativeStructuredOutput => {
+                self.supports_native_structured_output_impl()
+            }
         }
     }
 
@@ -450,6 +486,14 @@ impl BedrockModel {
         match self.inner_model() {
             InnerModel::Direct(model) => model.supports_tools(),
             InnerModel::CrossRegion(model) => model.supports_tools(),
+            _ => false,
+        }
+    }
+
+    fn supports_native_structured_output_impl(&self) -> bool {
+        match self.inner_model() {
+            InnerModel::Direct(model) => model.supports_native_structured_output(),
+            InnerModel::CrossRegion(model) => model.supports_native_structured_output(),
             _ => false,
         }
     }
@@ -505,6 +549,8 @@ impl DirectModel {
                 | Self::ClaudeHaiku3
                 | Self::Llama32_90B
                 | Self::Llama32_11B
+                | Self::NovaProV1
+                | Self::NovaLiteV1
         )
     }
 
@@ -520,7 +566,14 @@ impl DirectModel {
                 | Self::CohereCommandRPlus
                 | Self::CohereCommandR
                 | Self::MistralLarge
+                | Self::NovaProV1
+                | Self::NovaLiteV1
+                | Self::NovaMicroV1
         )
+    }
+
+    fn supports_native_structured_output(&self) -> bool {
+        matches!(self, Self::NovaProV1 | Self::NovaLiteV1 | Self::NovaMicroV1)
     }
 
     fn max_output_tokens(&self) -> u32 {
@@ -534,6 +587,7 @@ impl DirectModel {
             Self::TitanTextLite => 4096,
             Self::CohereCommandRPlus | Self::CohereCommandR => 4096,
             Self::MistralLarge | Self::MistralSmall => 8192,
+            Self::NovaProV1 | Self::NovaLiteV1 | Self::NovaMicroV1 => 5120,
             _ => 0,
         }
     }
@@ -551,6 +605,8 @@ impl DirectModel {
             Self::TitanTextExpress | Self::TitanTextLite => 8_000,
             Self::CohereCommandRPlus | Self::CohereCommandR => 128_000,
             Self::MistralLarge | Self::MistralSmall => 128_000,
+            Self::NovaProV1 | Self::NovaLiteV1 => 300_000,
+            Self::NovaMicroV1 => 128_000,
             _ => 0,
         }
     }
@@ -575,6 +631,8 @@ impl CrossRegionModel {
                 | Self::ClaudeSonnet35
                 | Self::ClaudeHaiku3
                 | Self::MistralPixtralLarge
+                | Self::NovaProV1
+                | Self::NovaLiteV1
         )
     }
 
@@ -588,7 +646,14 @@ impl CrossRegionModel {
                 | Self::ClaudeSonnet35
                 | Self::ClaudeHaiku3
                 | Self::MistralPixtralLarge
+                | Self::NovaProV1
+                | Self::NovaLiteV1
+                | Self::NovaMicroV1
         )
+    }
+
+    fn supports_native_structured_output(&self) -> bool {
+        matches!(self, Self::NovaProV1 | Self::NovaLiteV1 | Self::NovaMicroV1)
     }
 
     fn max_output_tokens(&self) -> u32 {
@@ -597,6 +662,7 @@ impl CrossRegionModel {
             Self::ClaudeOpus3 | Self::ClaudeSonnet35 => 8192,
             Self::ClaudeHaiku3 => 4096,
             Self::MistralPixtralLarge => 8192,
+            Self::NovaProV1 | Self::NovaLiteV1 | Self::NovaMicroV1 => 5120,
             Self::CohereEmbedV4 => 0,
         }
     }
@@ -606,6 +672,8 @@ impl CrossRegionModel {
             Self::ClaudeSonnet4 | Self::ClaudeSonnet45 | Self::ClaudeSonnet35V2 => 200_000,
             Self::ClaudeOpus3 | Self::ClaudeSonnet35 | Self::ClaudeHaiku3 => 200_000,
             Self::MistralPixtralLarge => 128_000,
+            Self::NovaProV1 | Self::NovaLiteV1 => 300_000,
+            Self::NovaMicroV1 => 128_000,
             Self::CohereEmbedV4 => 0,
         }
     }
@@ -649,6 +717,11 @@ pub enum ModelCapability {
 
     /// Streaming responses
     Streaming,
+
+    /// Native structured output via outputConfig.textFormat (Bedrock Converse).
+    /// Models with this capability receive JSON directly without the synthetic
+    /// json_schema_tool workaround needed by Claude and other models.
+    NativeStructuredOutput,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -741,6 +814,8 @@ pub struct ModelCapabilityOverride {
     pub tool_use: Option<bool>,
     #[serde(default)]
     pub streaming: Option<bool>,
+    #[serde(default)]
+    pub native_structured_output: Option<bool>,
 }
 
 impl ModelCapabilityOverride {
@@ -752,6 +827,7 @@ impl ModelCapabilityOverride {
             ModelCapability::Vision => self.vision,
             ModelCapability::ToolUse => self.tool_use,
             ModelCapability::Streaming => self.streaming,
+            ModelCapability::NativeStructuredOutput => self.native_structured_output,
         }
     }
 }
@@ -759,6 +835,114 @@ impl ModelCapabilityOverride {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_nova_model_ids() {
+        let nova_pro = BedrockModel::Direct(DirectModel::NovaProV1);
+        assert_eq!(nova_pro.model_id(), "amazon.nova-pro-v1:0");
+
+        let nova_lite = BedrockModel::Direct(DirectModel::NovaLiteV1);
+        assert_eq!(nova_lite.model_id(), "amazon.nova-lite-v1:0");
+
+        let nova_micro = BedrockModel::Direct(DirectModel::NovaMicroV1);
+        assert_eq!(nova_micro.model_id(), "amazon.nova-micro-v1:0");
+
+        let nova_pro_eu = BedrockModel::eu(CrossRegionModel::NovaProV1);
+        assert!(nova_pro_eu.model_id().contains("nova-pro-v1:0"));
+        assert!(nova_pro_eu.model_id().contains("amazon"));
+    }
+
+    #[test]
+    fn test_nova_from_id() {
+        let model = BedrockModel::from_id("amazon.nova-pro-v1:0");
+        assert!(matches!(
+            model,
+            BedrockModel::Direct(DirectModel::NovaProV1)
+        ));
+
+        let model = BedrockModel::from_id("amazon.nova-lite-v1:0");
+        assert!(matches!(
+            model,
+            BedrockModel::Direct(DirectModel::NovaLiteV1)
+        ));
+
+        let model = BedrockModel::from_id("amazon.nova-micro-v1:0");
+        assert!(matches!(
+            model,
+            BedrockModel::Direct(DirectModel::NovaMicroV1)
+        ));
+    }
+
+    #[test]
+    fn test_nova_capabilities() {
+        let nova_pro = BedrockModel::Direct(DirectModel::NovaProV1);
+        assert!(nova_pro.supports(ModelCapability::Chat));
+        assert!(nova_pro.supports(ModelCapability::Vision));
+        assert!(nova_pro.supports(ModelCapability::ToolUse));
+        assert!(nova_pro.supports(ModelCapability::NativeStructuredOutput));
+        assert!(!nova_pro.supports(ModelCapability::Embeddings));
+
+        let nova_lite = BedrockModel::Direct(DirectModel::NovaLiteV1);
+        assert!(nova_lite.supports(ModelCapability::Vision));
+        assert!(nova_lite.supports(ModelCapability::NativeStructuredOutput));
+
+        let nova_micro = BedrockModel::Direct(DirectModel::NovaMicroV1);
+        assert!(!nova_micro.supports(ModelCapability::Vision));
+        assert!(nova_micro.supports(ModelCapability::ToolUse));
+        assert!(nova_micro.supports(ModelCapability::NativeStructuredOutput));
+
+        let nova_pro_eu = BedrockModel::eu(CrossRegionModel::NovaProV1);
+        assert!(nova_pro_eu.supports(ModelCapability::NativeStructuredOutput));
+        assert!(nova_pro_eu.supports(ModelCapability::ToolUse));
+
+        let nova_micro_eu = BedrockModel::eu(CrossRegionModel::NovaMicroV1);
+        assert!(nova_micro_eu.supports(ModelCapability::NativeStructuredOutput));
+    }
+
+    #[test]
+    fn test_claude_does_not_support_native_structured_output() {
+        let claude = BedrockModel::Direct(DirectModel::ClaudeSonnet4);
+        assert!(!claude.supports(ModelCapability::NativeStructuredOutput));
+
+        let claude_eu = BedrockModel::eu(CrossRegionModel::ClaudeSonnet4);
+        assert!(!claude_eu.supports(ModelCapability::NativeStructuredOutput));
+    }
+
+    #[test]
+    fn test_nova_context_windows() {
+        let nova_pro = BedrockModel::Direct(DirectModel::NovaProV1);
+        assert_eq!(nova_pro.context_window(), 300_000);
+
+        let nova_lite = BedrockModel::Direct(DirectModel::NovaLiteV1);
+        assert_eq!(nova_lite.context_window(), 300_000);
+
+        let nova_micro = BedrockModel::Direct(DirectModel::NovaMicroV1);
+        assert_eq!(nova_micro.context_window(), 128_000);
+
+        let nova_pro_eu = BedrockModel::eu(CrossRegionModel::NovaProV1);
+        assert_eq!(nova_pro_eu.context_window(), 300_000);
+    }
+
+    #[test]
+    fn test_capability_override_native_structured_output() {
+        let mut override_entry = ModelCapabilityOverride::default();
+        assert_eq!(
+            override_entry.supports(ModelCapability::NativeStructuredOutput),
+            None
+        );
+
+        override_entry.native_structured_output = Some(true);
+        assert_eq!(
+            override_entry.supports(ModelCapability::NativeStructuredOutput),
+            Some(true)
+        );
+
+        override_entry.native_structured_output = Some(false);
+        assert_eq!(
+            override_entry.supports(ModelCapability::NativeStructuredOutput),
+            Some(false)
+        );
+    }
 
     #[test]
     fn test_model_id() {
