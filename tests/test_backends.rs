@@ -1410,4 +1410,35 @@ mod google_service_tier_live_tests {
             Err(e) => panic!("Google service-tier chat failed: {e}"),
         }
     }
+
+    #[tokio::test]
+    async fn test_google_enterprise_agent_platform() {
+        let api_key = match get_api_key("test_google_enterprise_agent_platform") {
+            Some(k) => k,
+            None => return,
+        };
+        let project_id = std::env::var("GOOGLE_PROJECT_ID").unwrap();
+
+        let llm = LLMBuilder::new()
+            .backend(LLMBackend::Google)
+            .google_platform(
+                llm::backends::google::GooglePlatform::GeminiEnterpriseAgent(project_id),
+            )
+            .api_key(api_key)
+            .model("gemini-2.5-flash-lite")
+            .max_tokens(64)
+            .build()
+            .expect("Failed to build LLM");
+
+        let messages = vec![ChatMessage::user().content("Say hello.").build()];
+        match llm.chat(&messages).await {
+            Ok(response) => {
+                assert!(
+                    response.text().is_some() && !response.text().unwrap().is_empty(),
+                    "Expected non-empty response"
+                );
+            }
+            Err(e) => panic!("Google chat failed: {e}"),
+        }
+    }
 }
