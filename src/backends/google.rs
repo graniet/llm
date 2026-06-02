@@ -97,9 +97,32 @@ impl Serialize for GoogleServiceTier {
     }
 }
 
+type GoogleProjectId = String;
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum GooglePlatform {
+    #[default]
+    GoogleAiStudio,
+    GeminiEnterpriseAgent(GoogleProjectId),
+}
+
+impl GooglePlatform {
+    fn model_base_url(&self) -> String {
+        match self {
+            Self::GoogleAiStudio => {
+                "https://generativelanguage.googleapis.com/v1beta/models".to_owned()
+            }
+            Self::GeminiEnterpriseAgent(project_id) => {
+                format!("https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models")
+            }
+        }
+    }
+}
+
 /// Configuration for the Google Gemini client.
 #[derive(Debug)]
 pub struct GoogleConfig {
+    /// Platform to use for the Gemini API: Google AI Studio or Gemini Enterprise Agent.
+    pub platform: GooglePlatform,
     /// API key for authentication with Google.
     pub api_key: String,
     /// Model identifier (e.g., "gemini-pro").
@@ -530,6 +553,7 @@ impl Google {
     /// * `json_schema` - JSON schema for structured output
     /// * `tools` - Function tools that the model can use
     /// * `service_tier` - Service tier for inference (standard, flex, or priority)
+    /// * `platform` - Platform to use for the Gemini API (Google AI Studio or Gemini Enterprise Agent)
     ///
     /// # Returns
     ///
@@ -547,6 +571,7 @@ impl Google {
         json_schema: Option<StructuredOutputFormat>,
         tools: Option<Vec<Tool>>,
         service_tier: Option<GoogleServiceTier>,
+        platform: Option<GooglePlatform>,
     ) -> Self {
         let mut builder = Client::builder();
         if let Some(sec) = timeout_seconds {
@@ -565,6 +590,7 @@ impl Google {
             json_schema,
             tools,
             service_tier,
+            platform,
         )
     }
 
@@ -583,6 +609,7 @@ impl Google {
         json_schema: Option<StructuredOutputFormat>,
         tools: Option<Vec<Tool>>,
         service_tier: Option<GoogleServiceTier>,
+        platform: Option<GooglePlatform>,
     ) -> Self {
         Self {
             config: Arc::new(GoogleConfig {
@@ -597,9 +624,14 @@ impl Google {
                 json_schema,
                 tools,
                 service_tier,
+                platform: platform.unwrap_or_default(),
             }),
             client,
         }
+    }
+
+    pub fn platform(&self) -> &GooglePlatform {
+        &self.config.platform
     }
 
     pub fn api_key(&self) -> &str {
@@ -788,7 +820,8 @@ impl ChatProvider for Google {
         }
 
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
+            "{model_base_url}/{model}:generateContent?key={key}",
+            model_base_url = self.config.platform.model_base_url(),
             model = self.config.model,
             key = self.config.api_key
         );
@@ -963,10 +996,10 @@ impl ChatProvider for Google {
         }
 
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
+            "{model_base_url}/{model}:generateContent?key={key}",
+            model_base_url = self.config.platform.model_base_url(),
             model = self.config.model,
             key = self.config.api_key
-
         );
 
         let mut request = self.client.post(&url).json(&req_body);
@@ -1109,7 +1142,8 @@ impl ChatProvider for Google {
             service_tier: self.config.service_tier.as_ref(),
         };
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse&key={key}",
+            "{model_base_url}/{model}:streamGenerateContent?alt=sse&key={key}",
+            model_base_url = self.config.platform.model_base_url(),
             model = self.config.model,
             key = self.config.api_key
         );
@@ -1173,8 +1207,9 @@ impl EmbeddingProvider for Google {
             };
 
             let url = format!(
-                "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={}",
-                self.config.api_key
+                "{model_base_url}/text-embedding-004:embedContent?key={key}",
+                model_base_url = self.config.platform.model_base_url(),
+                key = self.config.api_key
             );
 
             let resp = self
@@ -1372,8 +1407,9 @@ impl ModelsProvider for Google {
         }
 
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models?key={}",
-            self.config.api_key
+            "{model_base_url}?key={key}",
+            model_base_url = self.config.platform.model_base_url(),
+            key = self.config.api_key
         );
 
         let resp = self.client.get(&url).send().await?.error_for_status()?;

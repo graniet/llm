@@ -57,6 +57,8 @@ pub(crate) struct BuilderState {
     pub(crate) resilient_jitter: Option<bool>,
     #[cfg(feature = "google")]
     pub(crate) google_service_tier: Option<crate::backends::google::GoogleServiceTier>,
+    #[cfg(feature = "google")]
+    pub(crate) google_platform: Option<crate::backends::google::GooglePlatform>,
 }
 
 impl BuilderState {
