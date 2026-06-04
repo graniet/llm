@@ -97,6 +97,8 @@ impl Serialize for GoogleServiceTier {
     }
 }
 
+const VERTEX_SHARED_REQUEST_TYPE_HEADER: &str = "X-Vertex-AI-LLM-Shared-Request-Type";
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum GooglePlatform {
     #[default]
@@ -180,7 +182,7 @@ struct GoogleChatRequest<'a> {
     /// Tools that the model can use
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<GoogleTool>>,
-    /// Service tier ("standard", "flex", or "priority")
+    /// Service tier ("standard", "flex", or "priority") for Google AI Studio requests.
     #[serde(skip_serializing_if = "Option::is_none", rename = "service_tier")]
     service_tier: Option<&'a GoogleServiceTier>,
 }
@@ -688,6 +690,37 @@ impl Google {
     pub fn client(&self) -> &Client {
         &self.client
     }
+
+    fn request_body_service_tier(&self) -> Option<&GoogleServiceTier> {
+        match &self.config.platform {
+            GooglePlatform::GoogleAiStudio => self.config.service_tier.as_ref(),
+            GooglePlatform::GeminiEnterpriseAgent { .. } => None,
+        }
+    }
+
+    fn vertex_service_tier_header(&self) -> Option<&'static str> {
+        match (&self.config.platform, self.config.service_tier.as_ref()) {
+            (GooglePlatform::GeminiEnterpriseAgent { .. }, Some(GoogleServiceTier::Flex)) => {
+                Some(GoogleServiceTier::Flex.as_str())
+            }
+            (GooglePlatform::GeminiEnterpriseAgent { .. }, Some(GoogleServiceTier::Priority)) => {
+                Some(GoogleServiceTier::Priority.as_str())
+            }
+            _ => None,
+        }
+    }
+
+    fn configure_request(&self, mut request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if let Some(timeout) = self.config.timeout_seconds {
+            request = request.timeout(std::time::Duration::from_secs(timeout));
+        }
+
+        if let Some(service_tier) = self.vertex_service_tier_header() {
+            request = request.header(VERTEX_SHARED_REQUEST_TYPE_HEADER, service_tier);
+        }
+
+        request
+    }
 }
 
 const AUDIO_UNSUPPORTED: &str = "Audio messages are not supported by Google chat";
@@ -818,7 +851,7 @@ impl ChatProvider for Google {
             contents: chat_contents,
             generation_config,
             tools: None,
-            service_tier: self.config.service_tier.as_ref(),
+            service_tier: self.request_body_service_tier(),
         };
         if log::log_enabled!(log::Level::Trace) {
             if let Ok(json) = serde_json::to_string(&req_body) {
@@ -833,10 +866,7 @@ impl ChatProvider for Google {
             key = self.config.api_key
         );
 
-        let mut request = self.client.post(&url).json(&req_body);
-        if let Some(timeout) = self.config.timeout_seconds {
-            request = request.timeout(std::time::Duration::from_secs(timeout));
-        }
+        let request = self.configure_request(self.client.post(&url).json(&req_body));
 
         let resp = request.send().await?;
         log::debug!("Google Gemini HTTP status: {}", resp.status());
@@ -993,7 +1023,7 @@ impl ChatProvider for Google {
             contents: chat_contents,
             generation_config,
             tools: google_tools,
-            service_tier: self.config.service_tier.as_ref(),
+            service_tier: self.request_body_service_tier(),
         };
 
         if log::log_enabled!(log::Level::Trace) {
@@ -1009,11 +1039,7 @@ impl ChatProvider for Google {
             key = self.config.api_key
         );
 
-        let mut request = self.client.post(&url).json(&req_body);
-
-        if let Some(timeout) = self.config.timeout_seconds {
-            request = request.timeout(std::time::Duration::from_secs(timeout));
-        }
+        let request = self.configure_request(self.client.post(&url).json(&req_body));
 
         let resp = request.send().await?;
 
@@ -1146,7 +1172,7 @@ impl ChatProvider for Google {
             contents: chat_contents,
             generation_config,
             tools: None,
-            service_tier: self.config.service_tier.as_ref(),
+            service_tier: self.request_body_service_tier(),
         };
         let url = format!(
             "{model_base_url}/{model}:streamGenerateContent?alt=sse&key={key}",
@@ -1155,10 +1181,7 @@ impl ChatProvider for Google {
             key = self.config.api_key
         );
 
-        let mut request = self.client.post(&url).json(&req_body);
-        if let Some(timeout) = self.config.timeout_seconds {
-            request = request.timeout(std::time::Duration::from_secs(timeout));
-        }
+        let request = self.configure_request(self.client.post(&url).json(&req_body));
         let response = request.send().await?;
         if !response.status().is_success() {
             let status = response.status();
