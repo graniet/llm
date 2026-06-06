@@ -8,6 +8,7 @@ pub enum OnboardingStep {
     Welcome,
     Provider,
     ApiKey,
+    BaseUrl,
     Preferences,
     Confirm,
 }
@@ -25,6 +26,7 @@ pub struct OnboardingState {
     pub providers: Vec<OnboardingProvider>,
     pub selected: usize,
     pub api_key: String,
+    pub base_url: String,
     pub mode: NavigationMode,
     pub theme: String,
     pub error: Option<String>,
@@ -37,6 +39,7 @@ impl OnboardingState {
             providers,
             selected: 0,
             api_key: String::new(),
+            base_url: String::new(),
             mode,
             theme,
             error: None,
@@ -47,7 +50,8 @@ impl OnboardingState {
         self.step = match self.step {
             OnboardingStep::Welcome => OnboardingStep::Provider,
             OnboardingStep::Provider => OnboardingStep::ApiKey,
-            OnboardingStep::ApiKey => OnboardingStep::Preferences,
+            OnboardingStep::ApiKey => OnboardingStep::BaseUrl,
+            OnboardingStep::BaseUrl => OnboardingStep::Preferences,
             OnboardingStep::Preferences => OnboardingStep::Confirm,
             OnboardingStep::Confirm => OnboardingStep::Confirm,
         };
@@ -59,7 +63,8 @@ impl OnboardingState {
             OnboardingStep::Welcome => OnboardingStep::Welcome,
             OnboardingStep::Provider => OnboardingStep::Welcome,
             OnboardingStep::ApiKey => OnboardingStep::Provider,
-            OnboardingStep::Preferences => OnboardingStep::ApiKey,
+            OnboardingStep::BaseUrl => OnboardingStep::ApiKey,
+            OnboardingStep::Preferences => OnboardingStep::BaseUrl,
             OnboardingStep::Confirm => OnboardingStep::Preferences,
         };
         self.error = None;
@@ -83,5 +88,14 @@ impl OnboardingState {
 
     pub fn set_error(&mut self, message: impl Into<String>) {
         self.error = Some(message.into());
+    }
+
+    pub fn default_base_url(&self) -> Option<&str> {
+        self.selected_provider().and_then(|provider| {
+            match provider.backend {
+                LLMBackend::Anthropic => Some("https://api.anthropic.com/v1"),
+                _ => None,
+            }
+        })
     }
 }

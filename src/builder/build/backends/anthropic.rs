@@ -22,6 +22,7 @@ pub(super) fn build_anthropic(
 
     let provider = crate::backends::anthropic::Anthropic::new(
         api_key,
+        state.base_url.take(),
         state.model.take(),
         state.max_tokens,
         state.temperature,

@@ -35,6 +35,8 @@ use serde_json::Value;
 pub struct AnthropicConfig {
     /// API key for authentication with Anthropic.
     pub api_key: String,
+    /// Base URL for API requests.
+    pub base_url: String,
     /// Model identifier (e.g., "claude-3-sonnet-20240229").
     pub model: String,
     /// Maximum tokens to generate in responses.
@@ -352,23 +354,25 @@ impl Anthropic {
     fn convert_messages_to_anthropic<'a>(messages: &'a [ChatMessage]) -> Vec<AnthropicMessage<'a>> {
         messages
             .iter()
-            .map(|m| AnthropicMessage {
-                role: match m.role {
-                    ChatRole::User => "user",
-                    ChatRole::Assistant => "assistant",
-                },
-                content: match &m.message_type {
-                    MessageType::Text => vec![MessageContent {
-                        message_type: Some("text"),
-                        text: Some(&m.content),
-                        image_url: None,
-                        source: None,
-                        tool_use_id: None,
-                        tool_input: None,
-                        tool_name: None,
-                        tool_result_id: None,
-                        tool_output: None,
-                    }],
+            .filter_map(|m| {
+                let content = match &m.message_type {
+                    MessageType::Text => {
+                        // Skip empty text messages - Anthropic API rejects empty text content blocks
+                        if m.content.trim().is_empty() {
+                            return None;
+                        }
+                        vec![MessageContent {
+                            message_type: Some("text"),
+                            text: Some(&m.content),
+                            image_url: None,
+                            source: None,
+                            tool_use_id: None,
+                            tool_input: None,
+                            tool_name: None,
+                            tool_result_id: None,
+                            tool_output: None,
+                        }]
+                    }
                     MessageType::Pdf(raw_bytes) => {
                         vec![MessageContent {
                             message_type: Some("document"),
@@ -446,7 +450,19 @@ impl Anthropic {
                             tool_output: Some(r.function.arguments.clone()),
                         })
                         .collect(),
-                },
+                };
+
+                Some(AnthropicMessage {
+                    role: match m.role {
+                        ChatRole::User => "user",
+                        ChatRole::Assistant => match &m.message_type {
+                            // In Anthropic API spec, tool results must be sent as USER messages instead of ASSISTANT
+                            MessageType::ToolResult(_) => "user",
+                            _ => "assistant",
+                        },
+                    },
+                    content,
+                })
             })
             .collect()
     }
@@ -512,6 +528,7 @@ impl Anthropic {
     /// # Arguments
     ///
     /// * `api_key` - Anthropic API key for authentication
+    /// * `base_url` - Base URL for API requests (defaults to "https://api.anthropic.com/v1")
     /// * `model` - Model identifier (defaults to "claude-3-sonnet-20240229")
     /// * `max_tokens` - Maximum tokens in response (defaults to 300)
     /// * `temperature` - Sampling temperature (defaults to 0.7)
@@ -521,6 +538,7 @@ impl Anthropic {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         api_key: impl Into<String>,
+        base_url: Option<String>,
         model: Option<String>,
         max_tokens: Option<u32>,
         temperature: Option<f32>,
@@ -541,6 +559,7 @@ impl Anthropic {
         Self::with_client(
             builder.build().expect("Failed to build reqwest Client"),
             api_key,
+            base_url,
             model,
             max_tokens,
             temperature,
@@ -565,6 +584,7 @@ impl Anthropic {
     ///
     /// * `client` - A pre-configured `reqwest::Client` for HTTP requests
     /// * `api_key` - Anthropic API key for authentication
+    /// * `base_url` - Base URL for API requests (defaults to "https://api.anthropic.com/v1")
     /// * `model` - Model identifier (defaults to "claude-3-sonnet-20240229")
     /// * `max_tokens` - Maximum tokens in response (defaults to 300)
     /// * `temperature` - Sampling temperature (defaults to 0.7)
@@ -575,6 +595,7 @@ impl Anthropic {
     pub fn with_client(
         client: Client,
         api_key: impl Into<String>,
+        base_url: Option<String>,
         model: Option<String>,
         max_tokens: Option<u32>,
         temperature: Option<f32>,
@@ -590,6 +611,7 @@ impl Anthropic {
         Self {
             config: Arc::new(AnthropicConfig {
                 api_key: api_key.into(),
+                base_url: base_url.unwrap_or_else(|| "https://api.anthropic.com/v1".to_string()),
                 model: model.unwrap_or_else(|| "claude-3-sonnet-20240229".to_string()),
                 max_tokens: max_tokens.unwrap_or(300),
                 temperature: temperature.unwrap_or(0.7),
@@ -610,6 +632,10 @@ impl Anthropic {
 
     pub fn api_key(&self) -> &str {
         &self.config.api_key
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.config.base_url
     }
 
     pub fn model(&self) -> &str {
@@ -717,9 +743,10 @@ impl ChatProvider for Anthropic {
             thinking,
         };
 
+        let url = format!("{}/messages", self.config.base_url.trim_end_matches('/'));
         let mut request = self
             .client
-            .post("https://api.anthropic.com/v1/messages")
+            .post(&url)
             .header("x-api-key", &self.config.api_key)
             .header("Content-Type", "application/json")
             .header("anthropic-version", "2023-06-01")
@@ -847,9 +874,10 @@ impl ChatProvider for Anthropic {
             thinking: None,
         };
 
+        let url = format!("{}/messages", self.config.base_url);
         let mut request = self
             .client
-            .post("https://api.anthropic.com/v1/messages")
+            .post(&url)
             .header("x-api-key", &self.config.api_key)
             .header("Content-Type", "application/json")
             .header("anthropic-version", "2023-06-01")
@@ -917,9 +945,10 @@ impl ChatProvider for Anthropic {
             thinking: None, // Thinking not supported with streaming tools
         };
 
+        let url = format!("{}/messages", self.config.base_url);
         let mut request = self
             .client
-            .post("https://api.anthropic.com/v1/messages")
+            .post(&url)
             .header("x-api-key", &self.config.api_key)
             .header("Content-Type", "application/json")
             .header("anthropic-version", "2023-06-01")
@@ -1090,9 +1119,10 @@ impl ModelsProvider for Anthropic {
         &self,
         _request: Option<&ModelListRequest>,
     ) -> Result<Box<dyn ModelListResponse>, LLMError> {
+        let url = format!("{}/models", self.config.base_url);
         let resp = self
             .client
-            .get("https://api.anthropic.com/v1/models")
+            .get(&url)
             .header("x-api-key", &self.config.api_key)
             .header("Content-Type", "application/json")
             .header("anthropic-version", "2023-06-01")

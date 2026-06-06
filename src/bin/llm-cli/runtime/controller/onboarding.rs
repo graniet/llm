@@ -61,6 +61,23 @@ fn apply_onboarding_config(
     controller.state.config.default_provider = Some(provider.id.as_str().to_string());
     controller.state.config.ui.navigation_mode = state.mode;
     controller.state.config.ui.theme = state.theme.clone();
+
+    // Save provider config (backend and base_url)
+    let provider_config = controller
+        .state
+        .config
+        .providers
+        .entry(provider.id.as_str().to_string())
+        .or_default();
+
+    // Always set the backend field to ensure it's correctly configured
+    provider_config.backend = Some(provider.backend.to_string());
+
+    // Save base_url if provided
+    if !state.base_url.trim().is_empty() {
+        provider_config.base_url = Some(state.base_url.trim().to_string());
+    }
+
     if let Err(err) = save_config(&controller.state.config, &controller.config_paths) {
         controller.set_status(AppStatus::Error(format!("save config: {err}")));
         return Err(format!("save config: {err}"));

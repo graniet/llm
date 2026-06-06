@@ -39,9 +39,20 @@ pub fn handle_tick(controller: &mut AppController) -> bool {
 
 fn handle_paste_event(controller: &mut AppController, text: String) -> bool {
     if let OverlayState::Onboarding(state) = &mut controller.state.overlay {
-        state.api_key.push_str(&text);
-        controller.state.paste_detector.record_paste(Instant::now());
-        return true;
+        use crate::runtime::OnboardingStep;
+        match state.step {
+            OnboardingStep::ApiKey => {
+                state.api_key.push_str(&text);
+                controller.state.paste_detector.record_paste(Instant::now());
+                return true;
+            }
+            OnboardingStep::BaseUrl => {
+                state.base_url.push_str(&text);
+                controller.state.paste_detector.record_paste(Instant::now());
+                return true;
+            }
+            _ => {}
+        }
     }
     helpers::handle_paste(controller, text)
 }

@@ -36,6 +36,7 @@ fn step_title(step: OnboardingStep) -> &'static str {
         OnboardingStep::Welcome => "Welcome",
         OnboardingStep::Provider => "Choose Provider",
         OnboardingStep::ApiKey => "API Key",
+        OnboardingStep::BaseUrl => "Base URL",
         OnboardingStep::Preferences => "Preferences",
         OnboardingStep::Confirm => "Confirm",
     }
@@ -46,6 +47,7 @@ fn build_lines(state: &OnboardingState, theme: &Theme) -> Vec<Line<'static>> {
         OnboardingStep::Welcome => welcome_lines(),
         OnboardingStep::Provider => provider_lines(state),
         OnboardingStep::ApiKey => api_key_lines(state),
+        OnboardingStep::BaseUrl => base_url_lines(state),
         OnboardingStep::Preferences => preference_lines(state),
         OnboardingStep::Confirm => confirm_lines(state),
     };
@@ -90,6 +92,31 @@ fn api_key_lines(state: &OnboardingState) -> Vec<Line<'static>> {
     ]
 }
 
+fn base_url_lines(state: &OnboardingState) -> Vec<Line<'static>> {
+    let name = state
+        .selected_provider()
+        .map(|provider| provider.name.clone())
+        .unwrap_or_else(|| "provider".to_string());
+
+    let default_info = if let Some(default_url) = state.default_base_url() {
+        format!("(default: {})", default_url)
+    } else {
+        "(optional)".to_string()
+    };
+
+    let display_url = if state.base_url.is_empty() {
+        "<empty>".to_string()
+    } else {
+        state.base_url.clone()
+    };
+
+    vec![
+        Line::from(format!("Enter Base URL for {name} {}:", default_info)),
+        Line::from(display_url),
+        Line::from("Leave empty to use default. Press Enter to continue, Esc to go back."),
+    ]
+}
+
 fn preference_lines(state: &OnboardingState) -> Vec<Line<'static>> {
     vec![
         Line::from("Preferences:"),
@@ -104,11 +131,19 @@ fn confirm_lines(state: &OnboardingState) -> Vec<Line<'static>> {
         .selected_provider()
         .map(|p| p.id.as_str().to_string())
         .unwrap_or_else(|| "-".to_string());
-    vec![
+
+    let mut lines = vec![
         Line::from("Ready to go!"),
         Line::from(format!("Provider: {provider}")),
-        Line::from(format!("Mode: {:?}", state.mode)),
-        Line::from(format!("Theme: {}", state.theme)),
-        Line::from("Press Enter to finish."),
-    ]
+    ];
+
+    if !state.base_url.is_empty() {
+        lines.push(Line::from(format!("Base URL: {}", state.base_url)));
+    }
+
+    lines.push(Line::from(format!("Mode: {:?}", state.mode)));
+    lines.push(Line::from(format!("Theme: {}", state.theme)));
+    lines.push(Line::from("Press Enter to finish."));
+
+    lines
 }
