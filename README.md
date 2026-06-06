@@ -36,7 +36,7 @@ Simply add **LLM** to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-llm = { version = "1.2.4", features = ["openai", "anthropic", "ollama", "deepseek", "xai", "phind", "google", "groq", "mistral", "Elevenlabs"] }
+llm = { version = "1.3.8", features = ["openai", "anthropic", "ollama", "deepseek", "xai", "phind", "google", "groq", "mistral", "elevenlabs"] }
 ```
 
 ## Use any LLM on cli
@@ -57,7 +57,7 @@ LLM includes a command-line tool for easily interacting with different LLM model
 
 ```shell
 [dependencies]
-llm = { version = "1.2.4", features = ["openai", "anthropic", "ollama", "deepseek", "xai", "phind", "google", "groq", "api", "mistral", "elevenlabs"] }
+llm = { version = "1.3.8", features = ["openai", "anthropic", "ollama", "deepseek", "xai", "phind", "google", "groq", "api", "mistral", "elevenlabs"] }
 ```
 
 More details in the [`api_example`](examples/api_example.rs)
