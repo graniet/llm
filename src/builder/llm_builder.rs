@@ -1,5 +1,5 @@
 #[cfg(feature = "google")]
-use crate::backends::google::GoogleServiceTier;
+use crate::backends::google::{GooglePlatform, GoogleServiceTier};
 use secrecy::SecretString;
 
 use crate::chat::ReasoningEffort;
@@ -121,6 +121,16 @@ impl LLMBuilder {
     #[cfg(feature = "google")]
     pub fn google_service_tier(mut self, service_tier: GoogleServiceTier) -> Self {
         self.state.google_service_tier = Some(service_tier);
+        self
+    }
+
+    /// Sets the Google platform (vertex or genai).
+    ///
+    /// Only applies when using the Google backend. Controls which Google API is used under the hood.
+    /// See [`GooglePlatform`] for details.
+    #[cfg(feature = "google")]
+    pub fn google_platform(mut self, platform: GooglePlatform) -> Self {
+        self.state.google_platform = Some(platform);
         self
     }
 }

@@ -97,9 +97,41 @@ impl Serialize for GoogleServiceTier {
     }
 }
 
+const VERTEX_SHARED_REQUEST_TYPE_HEADER: &str = "X-Vertex-AI-LLM-Shared-Request-Type";
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum GooglePlatform {
+    #[default]
+    GoogleAiStudio,
+    GeminiEnterpriseAgent {
+        /// Google Cloud project ID for Gemini Enterprise Agent.
+        project_id: String,
+        /// Google Cloud region (e.g., "us-central1"). Optional, defaults to "global" if not specified.
+        region: Option<String>,
+    },
+}
+
+impl GooglePlatform {
+    fn model_base_url(&self) -> String {
+        match self {
+            Self::GoogleAiStudio => {
+                "https://generativelanguage.googleapis.com/v1beta/models".to_owned()
+            }
+            Self::GeminiEnterpriseAgent { project_id, region } => {
+                format!(
+                    "https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/{region}/publishers/google/models",
+                    region = region.as_deref().unwrap_or("global")
+                )
+            }
+        }
+    }
+}
+
 /// Configuration for the Google Gemini client.
 #[derive(Debug)]
 pub struct GoogleConfig {
+    /// Platform to use for the Gemini API: Google AI Studio or Gemini Enterprise Agent.
+    pub platform: GooglePlatform,
     /// API key for authentication with Google.
     pub api_key: String,
     /// Model identifier (e.g., "gemini-pro").
@@ -150,7 +182,7 @@ struct GoogleChatRequest<'a> {
     /// Tools that the model can use
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<GoogleTool>>,
-    /// Service tier ("standard", "flex", or "priority")
+    /// Service tier ("standard", "flex", or "priority") for Google AI Studio requests.
     #[serde(skip_serializing_if = "Option::is_none", rename = "service_tier")]
     service_tier: Option<&'a GoogleServiceTier>,
 }
@@ -530,6 +562,7 @@ impl Google {
     /// * `json_schema` - JSON schema for structured output
     /// * `tools` - Function tools that the model can use
     /// * `service_tier` - Service tier for inference (standard, flex, or priority)
+    /// * `platform` - Platform to use for the Gemini API (Google AI Studio or Gemini Enterprise Agent)
     ///
     /// # Returns
     ///
@@ -547,6 +580,7 @@ impl Google {
         json_schema: Option<StructuredOutputFormat>,
         tools: Option<Vec<Tool>>,
         service_tier: Option<GoogleServiceTier>,
+        platform: Option<GooglePlatform>,
     ) -> Self {
         let mut builder = Client::builder();
         if let Some(sec) = timeout_seconds {
@@ -565,6 +599,7 @@ impl Google {
             json_schema,
             tools,
             service_tier,
+            platform,
         )
     }
 
@@ -583,6 +618,7 @@ impl Google {
         json_schema: Option<StructuredOutputFormat>,
         tools: Option<Vec<Tool>>,
         service_tier: Option<GoogleServiceTier>,
+        platform: Option<GooglePlatform>,
     ) -> Self {
         Self {
             config: Arc::new(GoogleConfig {
@@ -597,9 +633,14 @@ impl Google {
                 json_schema,
                 tools,
                 service_tier,
+                platform: platform.unwrap_or_default(),
             }),
             client,
         }
+    }
+
+    pub fn platform(&self) -> &GooglePlatform {
+        &self.config.platform
     }
 
     pub fn api_key(&self) -> &str {
@@ -648,6 +689,37 @@ impl Google {
 
     pub fn client(&self) -> &Client {
         &self.client
+    }
+
+    fn request_body_service_tier(&self) -> Option<&GoogleServiceTier> {
+        match &self.config.platform {
+            GooglePlatform::GoogleAiStudio => self.config.service_tier.as_ref(),
+            GooglePlatform::GeminiEnterpriseAgent { .. } => None,
+        }
+    }
+
+    fn vertex_service_tier_header(&self) -> Option<&'static str> {
+        match (&self.config.platform, self.config.service_tier.as_ref()) {
+            (GooglePlatform::GeminiEnterpriseAgent { .. }, Some(GoogleServiceTier::Flex)) => {
+                Some(GoogleServiceTier::Flex.as_str())
+            }
+            (GooglePlatform::GeminiEnterpriseAgent { .. }, Some(GoogleServiceTier::Priority)) => {
+                Some(GoogleServiceTier::Priority.as_str())
+            }
+            _ => None,
+        }
+    }
+
+    fn configure_request(&self, mut request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if let Some(timeout) = self.config.timeout_seconds {
+            request = request.timeout(std::time::Duration::from_secs(timeout));
+        }
+
+        if let Some(service_tier) = self.vertex_service_tier_header() {
+            request = request.header(VERTEX_SHARED_REQUEST_TYPE_HEADER, service_tier);
+        }
+
+        request
     }
 }
 
@@ -779,7 +851,7 @@ impl ChatProvider for Google {
             contents: chat_contents,
             generation_config,
             tools: None,
-            service_tier: self.config.service_tier.as_ref(),
+            service_tier: self.request_body_service_tier(),
         };
         if log::log_enabled!(log::Level::Trace) {
             if let Ok(json) = serde_json::to_string(&req_body) {
@@ -788,15 +860,13 @@ impl ChatProvider for Google {
         }
 
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
+            "{model_base_url}/{model}:generateContent?key={key}",
+            model_base_url = self.config.platform.model_base_url(),
             model = self.config.model,
             key = self.config.api_key
         );
 
-        let mut request = self.client.post(&url).json(&req_body);
-        if let Some(timeout) = self.config.timeout_seconds {
-            request = request.timeout(std::time::Duration::from_secs(timeout));
-        }
+        let request = self.configure_request(self.client.post(&url).json(&req_body));
 
         let resp = request.send().await?;
         log::debug!("Google Gemini HTTP status: {}", resp.status());
@@ -953,7 +1023,7 @@ impl ChatProvider for Google {
             contents: chat_contents,
             generation_config,
             tools: google_tools,
-            service_tier: self.config.service_tier.as_ref(),
+            service_tier: self.request_body_service_tier(),
         };
 
         if log::log_enabled!(log::Level::Trace) {
@@ -963,17 +1033,13 @@ impl ChatProvider for Google {
         }
 
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
+            "{model_base_url}/{model}:generateContent?key={key}",
+            model_base_url = self.config.platform.model_base_url(),
             model = self.config.model,
             key = self.config.api_key
-
         );
 
-        let mut request = self.client.post(&url).json(&req_body);
-
-        if let Some(timeout) = self.config.timeout_seconds {
-            request = request.timeout(std::time::Duration::from_secs(timeout));
-        }
+        let request = self.configure_request(self.client.post(&url).json(&req_body));
 
         let resp = request.send().await?;
 
@@ -1106,18 +1172,16 @@ impl ChatProvider for Google {
             contents: chat_contents,
             generation_config,
             tools: None,
-            service_tier: self.config.service_tier.as_ref(),
+            service_tier: self.request_body_service_tier(),
         };
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse&key={key}",
+            "{model_base_url}/{model}:streamGenerateContent?alt=sse&key={key}",
+            model_base_url = self.config.platform.model_base_url(),
             model = self.config.model,
             key = self.config.api_key
         );
 
-        let mut request = self.client.post(&url).json(&req_body);
-        if let Some(timeout) = self.config.timeout_seconds {
-            request = request.timeout(std::time::Duration::from_secs(timeout));
-        }
+        let request = self.configure_request(self.client.post(&url).json(&req_body));
         let response = request.send().await?;
         if !response.status().is_success() {
             let status = response.status();
@@ -1173,8 +1237,9 @@ impl EmbeddingProvider for Google {
             };
 
             let url = format!(
-                "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={}",
-                self.config.api_key
+                "{model_base_url}/text-embedding-004:embedContent?key={key}",
+                model_base_url = self.config.platform.model_base_url(),
+                key = self.config.api_key
             );
 
             let resp = self
@@ -1372,8 +1437,9 @@ impl ModelsProvider for Google {
         }
 
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models?key={}",
-            self.config.api_key
+            "{model_base_url}?key={key}",
+            model_base_url = self.config.platform.model_base_url(),
+            key = self.config.api_key
         );
 
         let resp = self.client.get(&url).send().await?.error_for_status()?;

@@ -23,6 +23,7 @@ pub(super) fn build_google(
         state.json_schema.take(),
         tools,
         state.google_service_tier.take(),
+        state.google_platform.take(),
     );
 
     Ok(Box::new(provider))

@@ -1410,4 +1410,40 @@ mod google_service_tier_live_tests {
             Err(e) => panic!("Google service-tier chat failed: {e}"),
         }
     }
+
+    #[tokio::test]
+    async fn test_google_enterprise_agent_platform() {
+        let api_key = match get_api_key("test_google_flex_tier_chat") {
+            Some(k) => k,
+            None => return,
+        };
+        let project_id = match std::env::var("GOOGLE_PROJECT_ID").ok() {
+            Some(project_id) => project_id,
+            None => "aura-historia".to_string(),
+        };
+
+        let llm = LLMBuilder::new()
+            .backend(LLMBackend::Google)
+            .google_platform(
+                llm::backends::google::GooglePlatform::GeminiEnterpriseAgent {
+                    project_id,
+                    region: None,
+                },
+            )
+            .google_service_tier(GoogleServiceTier::Flex)
+            .api_key(api_key)
+            .model("gemini-3.1-flash-lite")
+            .max_tokens(64)
+            .build()
+            .expect("Failed to build LLM");
+
+        let messages = vec![ChatMessage::user().content("Say hello.").build()];
+        match llm.chat(&messages).await {
+            Ok(response) => {
+                let txt = response.text().unwrap();
+                dbg!("Google Enterprise Agent response: {:?}", txt);
+            }
+            Err(e) => panic!("Google chat failed: {e}"),
+        }
+    }
 }
