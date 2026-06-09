@@ -4,7 +4,7 @@
 
 > **Note**: This crate name previously belonged to another project. The current implementation represents a new and different library. The previous crate is now archived and will not receive any updates. **ref: https://github.com/rustformers/llm**
 
-**LLM** is a **Rust** library that lets you use **multiple LLM backends** in a single project: [OpenAI](https://openai.com), [Anthropic (Claude)](https://www.anthropic.com), [Ollama](https://github.com/ollama/ollama), [DeepSeek](https://www.deepseek.com), [xAI](https://x.ai), [Phind](https://www.phind.com), [Groq](https://www.groq.com), [Google](https://cloud.google.com/gemini), [Cohere](https://cohere.com), [Mistral](https://mistral.ai), [Hugging Face](https://huggingface.co) and [ElevenLabs](https://elevenlabs.io).
+**LLM** is a **Rust** library that lets you use **multiple LLM backends** in a single project: [OpenAI](https://openai.com), [Anthropic (Claude)](https://www.anthropic.com), [Ollama](https://github.com/ollama/ollama), [DeepSeek](https://www.deepseek.com), [xAI](https://x.ai), [Phind](https://www.phind.com), [Groq](https://www.groq.com), [Google](https://cloud.google.com/gemini), [Cohere](https://cohere.com), [Mistral](https://mistral.ai), [Hugging Face](https://huggingface.co), [ElevenLabs](https://elevenlabs.io) and [60db](https://60db.ai).
 With a **unified API** and **builder style** - similar to the Stripe experience - you can easily create **chat**, text **completion**, speak-to-text requests without multiplying structures and crates.
 
 ## Key Features
@@ -36,7 +36,7 @@ Simply add **LLM** to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-llm = { version = "1.3.8", features = ["openai", "anthropic", "ollama", "deepseek", "xai", "phind", "google", "groq", "mistral", "elevenlabs"] }
+llm = { version = "1.3.8", features = ["openai", "anthropic", "ollama", "deepseek", "xai", "phind", "google", "groq", "mistral", "elevenlabs", "sixtydb"] }
 ```
 
 ## Use any LLM on cli
@@ -57,7 +57,7 @@ LLM includes a command-line tool for easily interacting with different LLM model
 
 ```shell
 [dependencies]
-llm = { version = "1.3.8", features = ["openai", "anthropic", "ollama", "deepseek", "xai", "phind", "google", "groq", "api", "mistral", "elevenlabs"] }
+llm = { version = "1.3.8", features = ["openai", "anthropic", "ollama", "deepseek", "xai", "phind", "google", "groq", "api", "mistral", "elevenlabs", "sixtydb"] }
 ```
 
 More details in the [`api_example`](examples/api_example.rs)
@@ -101,6 +101,8 @@ More details in the [`api_example`](examples/api_example.rs)
 | [`anthropic_thinking_example`](examples/anthropic_thinking_example.rs) | Anthropic reasoning example |
 | [`elevenlabs_stt_example`](examples/elevenlabs_stt_example.rs) | Speech-to-text transcription example using ElevenLabs |
 | [`elevenlabs_tts_example`](examples/elevenlabs_tts_example.rs) | Text-to-speech example using ElevenLabs |
+| [`sixtydb_stt_example`](examples/sixtydb_stt_example.rs) | Speech-to-text transcription example using 60db |
+| [`sixtydb_tts_example`](examples/sixtydb_tts_example.rs) | Text-to-speech example using 60db |
 | [`openai_stt_example`](examples/openai_stt_example.rs) | Speech-to-text transcription example using OpenAI |
 | [`openai_tts_example`](examples/openai_tts_example.rs) | Text-to-speech example using OpenAI |
 | [`tts_rodio_example`](examples/tts_rodio_example.rs) | Text-to-speech with rodio example using OpenAI |

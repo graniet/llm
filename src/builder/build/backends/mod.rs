@@ -7,6 +7,7 @@ mod ollama;
 mod openai;
 mod openai_compatible;
 mod phind;
+mod sixtydb;
 mod xai;
 
 use crate::{
@@ -39,6 +40,7 @@ pub(super) fn build_backend(
         LLMBackend::HuggingFace => openai_compatible::build_huggingface(state, tools, tool_choice),
         LLMBackend::AzureOpenAI => azure::build_azure_openai(state, tools, tool_choice),
         LLMBackend::ElevenLabs => elevenlabs::build_elevenlabs(state),
+        LLMBackend::SixtyDb => sixtydb::build_sixtydb(state),
         LLMBackend::AwsBedrock => azure::build_bedrock(state, tools, tool_choice),
     }
 }

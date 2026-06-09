@@ -31,6 +31,9 @@ pub mod azure_openai;
 #[cfg(feature = "elevenlabs")]
 pub mod elevenlabs;
 
+#[cfg(feature = "sixtydb")]
+pub mod sixtydb;
+
 #[cfg(feature = "cohere")]
 pub mod cohere;
 
