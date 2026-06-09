@@ -82,6 +82,7 @@ fn builtin_provider_list() -> Vec<ProviderInfo> {
         provider_info("huggingface", "HuggingFace", LLMBackend::HuggingFace),
         provider_info("aws-bedrock", "AWS Bedrock", LLMBackend::AwsBedrock),
         provider_info("elevenlabs", "ElevenLabs", LLMBackend::ElevenLabs),
+        provider_info("60db", "60db", LLMBackend::SixtyDb),
     ]
 }
 
@@ -109,6 +110,6 @@ fn provider_capabilities(backend: &LLMBackend) -> ProviderCapabilities {
         LLMBackend::Google | LLMBackend::AwsBedrock => ProviderCapabilities::TOOLS_NO_STREAM,
         LLMBackend::Ollama => ProviderCapabilities::LOCAL_BASIC,
         LLMBackend::Phind => ProviderCapabilities::STREAM_ONLY,
-        LLMBackend::ElevenLabs => ProviderCapabilities::NONE,
+        LLMBackend::ElevenLabs | LLMBackend::SixtyDb => ProviderCapabilities::NONE,
     }
 }

@@ -13,6 +13,7 @@ pub fn backend_env_key(backend: &LLMBackend) -> Option<&'static str> {
         LLMBackend::Mistral => Some("MISTRAL_API_KEY"),
         LLMBackend::OpenRouter => Some("OPENROUTER_API_KEY"),
         LLMBackend::HuggingFace => Some("HF_TOKEN"),
+        LLMBackend::SixtyDb => Some("SIXTYDB_API_KEY"),
         LLMBackend::Ollama
         | LLMBackend::Phind
         | LLMBackend::ElevenLabs

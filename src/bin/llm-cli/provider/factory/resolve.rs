@@ -124,6 +124,7 @@ fn backend_label(backend: &LLMBackend) -> String {
         LLMBackend::Ollama => "ollama",
         LLMBackend::Phind => "phind",
         LLMBackend::ElevenLabs => "elevenlabs",
+        LLMBackend::SixtyDb => "60db",
         LLMBackend::AwsBedrock => "aws-bedrock",
     }
     .to_string()
