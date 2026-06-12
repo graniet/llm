@@ -10,9 +10,10 @@ use async_trait::async_trait;
 use aws_config::BehaviorVersion;
 use aws_sdk_bedrockruntime::{
     types::{
-        CachePointBlock, CachePointType, ContentBlock, ContentBlockDelta, ContentBlockStart, ConversationRole, ConverseStreamOutput,
-        Message, SystemContentBlock, Tool, ToolConfiguration, ToolInputSchema, ToolResultBlock,
-        ToolResultContentBlock, ToolUseBlock,
+        CachePointBlock, CachePointType, ContentBlock, ContentBlockDelta, ContentBlockStart,
+        ConversationRole, ConverseStreamOutput, JsonSchemaDefinition, Message, OutputConfig,
+        OutputFormat, OutputFormatStructure, OutputFormatType, SystemContentBlock, Tool,
+        ToolConfiguration, ToolInputSchema, ToolResultBlock, ToolResultContentBlock, ToolUseBlock,
     },
     Client as BedrockClient,
 };
@@ -27,7 +28,7 @@ use std::sync::Arc;
 use tokio::sync::OnceCell;
 
 use crate::chat::{
-    ChatMessage as LlmChatMessage, ChatProvider, StreamChunk as LlmStreamChunk, StreamChoice,
+    ChatMessage as LlmChatMessage, ChatProvider, StreamChoice, StreamChunk as LlmStreamChunk,
     StreamDelta, StreamResponse, StructuredOutputFormat, Tool as LlmTool,
     ToolChoice as LlmToolChoice,
 };
@@ -39,7 +40,7 @@ use crate::embedding::EmbeddingProvider;
 use crate::models::ModelsProvider;
 use crate::stt::SpeechToTextProvider;
 use crate::tts::TextToSpeechProvider;
-use crate::{FunctionCall, ToolCall, LLMProvider};
+use crate::{FunctionCall, LLMProvider, ToolCall};
 
 mod error;
 mod models;
@@ -81,6 +82,7 @@ struct PreparedChatRequest {
     system: Option<SystemContentBlock>,
     tool_config: Option<ToolConfiguration>,
     inference_config: aws_sdk_bedrockruntime::types::InferenceConfiguration,
+    output_config: Option<OutputConfig>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -186,7 +188,7 @@ impl BedrockBackend {
         Ok(Self {
             client: Arc::new(OnceCell::new()),
             region,
-            model: model.map(BedrockModel::Custom),
+            model: model.map(BedrockModel::from_id),
             max_tokens,
             temperature,
             timeout_seconds,
@@ -268,7 +270,6 @@ impl BedrockBackend {
                 .set_max_tokens(request.max_tokens.or(self.max_tokens).map(|t| t as i32))
                 .set_temperature(request.temperature.map(|t| t as f32).or(self.temperature))
                 .set_top_p(request.top_p.map(|p| p as f32).or(self.top_p))
-
                 .set_stop_sequences(request.stop_sequences)
                 .build(),
         );
@@ -329,6 +330,7 @@ impl BedrockBackend {
             system,
             tool_config,
             inference_config,
+            output_config,
         } = self.prepare_chat_request(request)?;
 
         let mut converse_request = client
@@ -344,6 +346,12 @@ impl BedrockBackend {
         // Add tools if provided
         if let Some(tool_config) = tool_config {
             converse_request = converse_request.tool_config(tool_config);
+        }
+
+        // Apply native structured output config for models that support outputConfig.textFormat
+        // (e.g. Nova). For other models this will be None and the tool-based path is used instead.
+        if let Some(output_config) = output_config {
+            converse_request = converse_request.output_config(output_config);
         }
 
         // Add inference configuration
@@ -498,6 +506,7 @@ impl BedrockBackend {
             system,
             tool_config,
             inference_config,
+            output_config,
         } = self.prepare_chat_request(request)?;
 
         let mut converse_request = client
@@ -513,6 +522,11 @@ impl BedrockBackend {
         // Add tools if provided
         if let Some(tool_config) = tool_config {
             converse_request = converse_request.tool_config(tool_config);
+        }
+
+        // Apply native structured output config for models that support outputConfig.textFormat
+        if let Some(output_config) = output_config {
+            converse_request = converse_request.output_config(output_config);
         }
 
         // Add inference configuration
@@ -590,6 +604,7 @@ impl BedrockBackend {
             system,
             tool_config,
             inference_config,
+            output_config,
         } = self.prepare_chat_request(request)?;
 
         let mut converse_request = client
@@ -603,6 +618,11 @@ impl BedrockBackend {
 
         if let Some(tool_config) = tool_config {
             converse_request = converse_request.tool_config(tool_config);
+        }
+
+        // Apply native structured output config for models that support outputConfig.textFormat
+        if let Some(output_config) = output_config {
+            converse_request = converse_request.output_config(output_config);
         }
 
         converse_request = converse_request.inference_config(inference_config);
@@ -669,8 +689,7 @@ impl BedrockBackend {
                                 _ => {}
                             },
                             ConverseStreamOutput::ContentBlockStop(stop) => {
-                                let index =
-                                    usize::try_from(stop.content_block_index).unwrap_or(0);
+                                let index = usize::try_from(stop.content_block_index).unwrap_or(0);
                                 if let Some(state) = tool_states.remove(&index) {
                                     if state.started {
                                         pending.push_back(LlmStreamChunk::ToolUseComplete {
@@ -798,6 +817,8 @@ impl BedrockBackend {
         }
 
         let mut tool_choice = self.tool_choice.clone();
+        let mut output_config: Option<OutputConfig> = None;
+
         if let Some(response_format) = self.json_schema.as_ref() {
             let schema = response_format.schema.clone().ok_or_else(|| {
                 BedrockError::InvalidRequest(
@@ -805,21 +826,63 @@ impl BedrockBackend {
                 )
             })?;
 
-            let input_schema = ToolInputSchema::Json(Self::value_to_document(&schema));
-
-            let tool_spec = aws_sdk_bedrockruntime::types::ToolSpecification::builder()
-                .name("json_schema_tool")
-                .description(
-                    "Generates structured output in JSON format according to the provided schema.",
-                )
-                .input_schema(input_schema)
-                .build()
-                .map_err(|e| {
-                    BedrockError::InvalidRequest(format!("Failed to build tool spec: {:?}", e))
+            if self.model_supports(&model_id, ModelCapability::NativeStructuredOutput) {
+                // Nova and other models that advertise NativeStructuredOutput receive the schema
+                // via outputConfig.textFormat. The response arrives as ContentBlock::Text
+                // (plain JSON), so no tool-call unwrapping is needed.
+                let schema_str = serde_json::to_string(&schema).map_err(|e| {
+                    BedrockError::InvalidRequest(format!("Failed to serialize schema: {}", e))
                 })?;
 
-            bedrock_tools.push(Tool::ToolSpec(tool_spec));
-            tool_choice = Some(LlmToolChoice::Tool("json_schema_tool".to_string()));
+                let mut json_schema_builder = JsonSchemaDefinition::builder().schema(schema_str);
+                if !response_format.name.is_empty() {
+                    json_schema_builder = json_schema_builder.name(&response_format.name);
+                }
+                if let Some(desc) = &response_format.description {
+                    json_schema_builder = json_schema_builder.description(desc);
+                }
+
+                let json_schema_def = json_schema_builder.build().map_err(|e| {
+                    BedrockError::InvalidRequest(format!(
+                        "Failed to build JSON schema definition: {:?}",
+                        e
+                    ))
+                })?;
+
+                let output_format = OutputFormat::builder()
+                    .r#type(OutputFormatType::JsonSchema)
+                    .structure(OutputFormatStructure::JsonSchema(json_schema_def))
+                    .build()
+                    .map_err(|e| {
+                        BedrockError::InvalidRequest(format!(
+                            "Failed to build output format: {:?}",
+                            e
+                        ))
+                    })?;
+
+                // OutputConfig::builder().build() is infallible - the SDK builder has no
+                // required fields beyond what we set via .text_format().
+                output_config = Some(OutputConfig::builder().text_format(output_format).build());
+            } else {
+                // Fallback for models without native structured output (e.g. Claude):
+                // inject a synthetic tool and force the model to call it, then unwrap
+                // the tool call in convert_chat_response.
+                let input_schema = ToolInputSchema::Json(Self::value_to_document(&schema));
+
+                let tool_spec = aws_sdk_bedrockruntime::types::ToolSpecification::builder()
+                    .name("json_schema_tool")
+                    .description(
+                        "Generates structured output in JSON format according to the provided schema.",
+                    )
+                    .input_schema(input_schema)
+                    .build()
+                    .map_err(|e| {
+                        BedrockError::InvalidRequest(format!("Failed to build tool spec: {:?}", e))
+                    })?;
+
+                bedrock_tools.push(Tool::ToolSpec(tool_spec));
+                tool_choice = Some(LlmToolChoice::Tool("json_schema_tool".to_string()));
+            }
         }
 
         if let Some(tools) = &self.tools {
@@ -905,6 +968,7 @@ impl BedrockBackend {
             system,
             tool_config,
             inference_config,
+            output_config,
         })
     }
 
@@ -1384,7 +1448,12 @@ impl ChatProvider for BedrockBackend {
         &self,
         messages: &[LlmChatMessage],
     ) -> std::result::Result<
-        Pin<Box<dyn Stream<Item = std::result::Result<StreamResponse, crate::error::LLMError>> + Send>>,
+        Pin<
+            Box<
+                dyn Stream<Item = std::result::Result<StreamResponse, crate::error::LLMError>>
+                    + Send,
+            >,
+        >,
         crate::error::LLMError,
     > {
         let aws_messages: Vec<ChatMessage> = messages
@@ -1434,17 +1503,15 @@ impl ChatProvider for BedrockBackend {
                     }],
                     usage: None,
                 })),
-                Ok(LlmStreamChunk::ToolUseComplete { tool_call, .. }) => {
-                    Some(Ok(StreamResponse {
-                        choices: vec![StreamChoice {
-                            delta: StreamDelta {
-                                content: None,
-                                tool_calls: Some(vec![tool_call]),
-                            },
-                        }],
-                        usage: None,
-                    }))
-                }
+                Ok(LlmStreamChunk::ToolUseComplete { tool_call, .. }) => Some(Ok(StreamResponse {
+                    choices: vec![StreamChoice {
+                        delta: StreamDelta {
+                            content: None,
+                            tool_calls: Some(vec![tool_call]),
+                        },
+                    }],
+                    usage: None,
+                })),
                 Ok(LlmStreamChunk::Done { .. }) => None,
                 Ok(_) => None,
                 Err(e) => Some(Err(crate::error::LLMError::ProviderError(e.to_string()))),
@@ -1459,7 +1526,12 @@ impl ChatProvider for BedrockBackend {
         messages: &[LlmChatMessage],
         tools: Option<&[LlmTool]>,
     ) -> std::result::Result<
-        Pin<Box<dyn Stream<Item = std::result::Result<LlmStreamChunk, crate::error::LLMError>> + Send>>,
+        Pin<
+            Box<
+                dyn Stream<Item = std::result::Result<LlmStreamChunk, crate::error::LLMError>>
+                    + Send,
+            >,
+        >,
         crate::error::LLMError,
     > {
         let aws_messages: Vec<ChatMessage> = messages
@@ -1740,5 +1812,124 @@ streaming = true
         let tool_call = state.to_tool_call();
 
         assert_eq!(tool_call.function.arguments, "{}");
+    }
+
+    #[test]
+    fn test_prepare_chat_request_nova_uses_output_config_not_tool() {
+        // Nova models must use outputConfig.textFormat for structured output,
+        // not the synthetic json_schema_tool workaround.
+        let backend = BedrockBackend::new(
+            "us-east-1".to_string(),
+            Some("amazon.nova-pro-v1:0".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(crate::chat::StructuredOutputFormat {
+                name: "result".to_string(),
+                description: None,
+                schema: Some(serde_json::json!({"type": "object", "properties": {}})),
+                strict: None,
+            }),
+        )
+        .unwrap();
+
+        let request = ChatRequest::new(vec![ChatMessage::user("hello")]);
+        let prepared = backend.prepare_chat_request(request).unwrap();
+
+        // output_config must be set for the native path
+        assert!(prepared.output_config.is_some());
+        // tool_config must be None -- no synthetic json_schema_tool should be injected
+        assert!(prepared.tool_config.is_none());
+    }
+
+    #[test]
+    fn test_prepare_chat_request_claude_uses_tool_not_output_config() {
+        // Claude (and other non-Nova models) must use the tool-based workaround.
+        let backend = BedrockBackend::new(
+            "us-east-1".to_string(),
+            Some("us.anthropic.claude-sonnet-4-0-v1:0".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(crate::chat::StructuredOutputFormat {
+                name: "result".to_string(),
+                description: None,
+                schema: Some(serde_json::json!({"type": "object", "properties": {}})),
+                strict: None,
+            }),
+        )
+        .unwrap();
+
+        let request = ChatRequest::new(vec![ChatMessage::user("hello")]);
+        let prepared = backend.prepare_chat_request(request).unwrap();
+
+        // tool_config must contain the synthetic json_schema_tool
+        let tool_config = prepared
+            .tool_config
+            .expect("tool_config should be present for Claude");
+        assert!(tool_config
+            .tools()
+            .iter()
+            .any(|t| matches!(t, Tool::ToolSpec(spec) if spec.name() == "json_schema_tool")));
+        // output_config must not be set
+        assert!(prepared.output_config.is_none());
+    }
+
+    #[test]
+    fn test_prepare_chat_request_nova_with_real_tools_and_schema() {
+        // When Nova has both real user tools AND json_schema set, real tools go into
+        // tool_config and the schema goes into output_config. Both can coexist because
+        // the synthetic json_schema_tool is never injected on the native path.
+        let backend = BedrockBackend::new(
+            "us-east-1".to_string(),
+            Some("amazon.nova-pro-v1:0".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(crate::chat::StructuredOutputFormat {
+                name: "result".to_string(),
+                description: None,
+                schema: Some(serde_json::json!({"type": "object", "properties": {}})),
+                strict: None,
+            }),
+        )
+        .unwrap();
+
+        let tools = vec![ToolDefinition {
+            name: "get_weather".to_string(),
+            description: "Get weather".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+            cache_control: None,
+        }];
+
+        let request = ChatRequest::new(vec![ChatMessage::user("hello")]).with_tools(tools);
+        let prepared = backend.prepare_chat_request(request).unwrap();
+
+        assert!(prepared.output_config.is_some());
+        let tool_config = prepared
+            .tool_config
+            .expect("real tools should produce tool_config");
+        let tools = tool_config.tools();
+        // Only the real tool, no json_schema_tool pollution
+        assert_eq!(tools.len(), 1);
+        assert!(matches!(tools[0], Tool::ToolSpec(ref spec) if spec.name() == "get_weather"));
     }
 }
