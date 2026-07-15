@@ -36,12 +36,56 @@ pub fn transform_response(resp: String, transform: &str) -> String {
             .join("\n"),
         "trim_whitespace" => resp.trim().to_string(),
         "extract_json" => {
-            let json_start = resp.find("```json").unwrap_or(0);
-            let json_end = resp.find("```").unwrap_or(resp.len());
-            let json_str = &resp[json_start..json_end];
-            serde_json::from_str::<String>(json_str)
-                .unwrap_or_else(|_| "Invalid JSON response".to_string())
+            // Extract the contents of a ```json ... ``` fenced block.
+            // Searching for a bare ``` to mark the end would match the first
+            // fence anywhere in the response (e.g. a preceding ```python
+            // block), which can put the closing index before the opening one
+            // and panic on the slice. Anchor the search after the opening
+            // ```json marker instead, and fall back to the whole response
+            // when no fenced block is present.
+            match resp.find("```json") {
+                Some(start) => {
+                    let after = start + "```json".len();
+                    let inner = &resp[after..];
+                    let end = inner.find("```").unwrap_or(inner.len());
+                    inner[..end].trim().to_string()
+                }
+                None => resp.trim().to_string(),
+            }
         }
         _ => resp,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::transform_response;
+
+    // A code fence preceding the ```json block used to make the closing-fence
+    // index land before the opening one, panicking on `&resp[start..end]`.
+    #[test]
+    fn extract_json_with_preceding_code_fence_does_not_panic() {
+        let resp =
+            "Example:\n```python\nprint(1)\n```\nResult:\n```json\n{\"a\":1}\n```".to_string();
+        let out = transform_response(resp, "extract_json");
+        assert_eq!(out, "{\"a\":1}");
+    }
+
+    #[test]
+    fn extract_json_returns_fenced_object() {
+        let resp = "```json\n{\"ok\": true}\n```".to_string();
+        assert_eq!(transform_response(resp, "extract_json"), "{\"ok\": true}");
+    }
+
+    #[test]
+    fn extract_json_without_fence_returns_trimmed_response() {
+        let resp = "  {\"x\":2}  ".to_string();
+        assert_eq!(transform_response(resp, "extract_json"), "{\"x\":2}");
+    }
+
+    #[test]
+    fn extract_json_open_fence_without_close_returns_remainder() {
+        let resp = "```json\n{\"partial\": 1}".to_string();
+        assert_eq!(transform_response(resp, "extract_json"), "{\"partial\": 1}");
     }
 }
