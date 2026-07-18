@@ -40,14 +40,14 @@ pub fn transform_response(resp: String, transform: &str) -> String {
             // Searching for a bare ``` to mark the end would match the first
             // fence anywhere in the response (e.g. a preceding ```python
             // block), which can put the closing index before the opening one
-            // and panic on the slice. Anchor the search after the opening
-            // ```json marker instead, and fall back to the whole response
-            // when no fenced block is present.
+            // and panic on the slice. Anchor after the opening ```json marker,
+            // and only accept a closing fence that is alone on its line so a
+            // ``` inside a JSON string value does not truncate early.
             match resp.find("```json") {
                 Some(start) => {
                     let after = start + "```json".len();
                     let inner = &resp[after..];
-                    let end = inner.find("```").unwrap_or(inner.len());
+                    let end = bare_closing_fence_offset(inner).unwrap_or(inner.len());
                     inner[..end].trim().to_string()
                 }
                 None => resp.trim().to_string(),
@@ -55,6 +55,19 @@ pub fn transform_response(resp: String, transform: &str) -> String {
         }
         _ => resp,
     }
+}
+
+/// Index of a line that is only ``` (optional surrounding whitespace).
+fn bare_closing_fence_offset(s: &str) -> Option<usize> {
+    let mut offset = 0;
+    for line in s.split_inclusive('\n') {
+        if line.trim() == "```" {
+            let indent = line.len() - line.trim_start().len();
+            return Some(offset + indent);
+        }
+        offset += line.len();
+    }
+    None
 }
 
 #[cfg(test)]
@@ -87,5 +100,15 @@ mod tests {
     fn extract_json_open_fence_without_close_returns_remainder() {
         let resp = "```json\n{\"partial\": 1}".to_string();
         assert_eq!(transform_response(resp, "extract_json"), "{\"partial\": 1}");
+    }
+
+    #[test]
+    fn extract_json_ignores_embedded_fence_inside_json_string() {
+        let resp =
+            "```json\n{\"answer\": \"```python\\nprint(1)\\n```\"}\n```".to_string();
+        assert_eq!(
+            transform_response(resp, "extract_json"),
+            "{\"answer\": \"```python\\nprint(1)\\n```\"}"
+        );
     }
 }
