@@ -29,6 +29,7 @@
 //!     None, // Default top_k
 //!     None, // No JSON schema
 //!     None, // No tools
+//!     None, // Default service tier
 //! );
 //!
 //! let messages = vec![
@@ -100,7 +101,7 @@ impl Serialize for GoogleServiceTier {
 /// Configuration for the Google Gemini client.
 #[derive(Debug)]
 pub struct GoogleConfig {
-    /// API key for authentication with Google.
+    /// API key for authentication with Google (or GCP Bearer token when vertex_ai_base_url is set).
     pub api_key: String,
     /// Model identifier (e.g., "gemini-pro").
     pub model: String,
@@ -122,6 +123,9 @@ pub struct GoogleConfig {
     pub tools: Option<Vec<Tool>>,
     /// Service tier for inference (standard, flex, or priority).
     pub service_tier: Option<GoogleServiceTier>,
+    /// Vertex AI base URL. When set, uses Bearer auth and Vertex AI endpoints.
+    /// Format: https://{location}-aiplatform.googleapis.com/v1/projects/{project}/locations/{location}
+    pub vertex_ai_base_url: Option<String>,
 }
 
 /// Client for interacting with Google's Gemini API.
@@ -584,6 +588,41 @@ impl Google {
         tools: Option<Vec<Tool>>,
         service_tier: Option<GoogleServiceTier>,
     ) -> Self {
+        Self::with_client_and_vertex(
+            client,
+            api_key,
+            model,
+            max_tokens,
+            temperature,
+            timeout_seconds,
+            system,
+            top_p,
+            top_k,
+            json_schema,
+            tools,
+            service_tier,
+            None,
+        )
+    }
+
+    /// Creates a Google Gemini client, optionally routing to a Vertex AI endpoint.
+    /// When `vertex_ai_base_url` is `Some`, `api_key` is treated as a Bearer token.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_client_and_vertex(
+        client: Client,
+        api_key: impl Into<String>,
+        model: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        timeout_seconds: Option<u64>,
+        system: Option<String>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+        json_schema: Option<StructuredOutputFormat>,
+        tools: Option<Vec<Tool>>,
+        service_tier: Option<GoogleServiceTier>,
+        vertex_ai_base_url: Option<String>,
+    ) -> Self {
         Self {
             config: Arc::new(GoogleConfig {
                 api_key: api_key.into(),
@@ -597,9 +636,56 @@ impl Google {
                 json_schema,
                 tools,
                 service_tier,
+                vertex_ai_base_url,
             }),
             client,
         }
+    }
+
+    fn generate_content_url(&self) -> String {
+        match &self.config.vertex_ai_base_url {
+            Some(base) => format!(
+                "{}/publishers/google/models/{}:generateContent",
+                base, self.config.model
+            ),
+            None => format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+                self.config.model, self.config.api_key
+            ),
+        }
+    }
+
+    fn stream_generate_content_url(&self) -> String {
+        match &self.config.vertex_ai_base_url {
+            Some(base) => format!(
+                "{}/publishers/google/models/{}:streamGenerateContent?alt=sse",
+                base, self.config.model
+            ),
+            None => format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
+                self.config.model, self.config.api_key
+            ),
+        }
+    }
+
+    fn embed_content_url(&self) -> String {
+        match &self.config.vertex_ai_base_url {
+            Some(base) => format!(
+                "{}/publishers/google/models/{}:embedContent",
+                base, self.config.model
+            ),
+            None => format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:embedContent?key={}",
+                self.config.model, self.config.api_key
+            ),
+        }
+    }
+
+    fn apply_auth(&self, mut req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if self.config.vertex_ai_base_url.is_some() {
+            req = req.header("Authorization", format!("Bearer {}", self.config.api_key));
+        }
+        req
     }
 
     pub fn api_key(&self) -> &str {
@@ -787,13 +873,8 @@ impl ChatProvider for Google {
             }
         }
 
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
-            model = self.config.model,
-            key = self.config.api_key
-        );
-
-        let mut request = self.client.post(&url).json(&req_body);
+        let url = self.generate_content_url();
+        let mut request = self.apply_auth(self.client.post(&url).json(&req_body));
         if let Some(timeout) = self.config.timeout_seconds {
             request = request.timeout(std::time::Duration::from_secs(timeout));
         }
@@ -962,15 +1043,8 @@ impl ChatProvider for Google {
             }
         }
 
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
-            model = self.config.model,
-            key = self.config.api_key
-
-        );
-
-        let mut request = self.client.post(&url).json(&req_body);
-
+        let url = self.generate_content_url();
+        let mut request = self.apply_auth(self.client.post(&url).json(&req_body));
         if let Some(timeout) = self.config.timeout_seconds {
             request = request.timeout(std::time::Duration::from_secs(timeout));
         }
@@ -1108,13 +1182,8 @@ impl ChatProvider for Google {
             tools: None,
             service_tier: self.config.service_tier.as_ref(),
         };
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse&key={key}",
-            model = self.config.model,
-            key = self.config.api_key
-        );
-
-        let mut request = self.client.post(&url).json(&req_body);
+        let url = self.stream_generate_content_url();
+        let mut request = self.apply_auth(self.client.post(&url).json(&req_body));
         if let Some(timeout) = self.config.timeout_seconds {
             request = request.timeout(std::time::Duration::from_secs(timeout));
         }
@@ -1165,22 +1234,17 @@ impl EmbeddingProvider for Google {
 
         // Process each text separately as Gemini API accepts one text at a time
         for text in texts {
+            let embed_model = format!("models/{}", self.config.model);
             let req_body = GoogleEmbeddingRequest {
-                model: "models/text-embedding-004",
+                model: &embed_model,
                 content: GoogleEmbeddingContent {
                     parts: vec![GoogleContentPart::Text(&text)],
                 },
             };
 
-            let url = format!(
-                "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={}",
-                self.config.api_key
-            );
-
+            let url = self.embed_content_url();
             let resp = self
-                .client
-                .post(&url)
-                .json(&req_body)
+                .apply_auth(self.client.post(&url).json(&req_body))
                 .send()
                 .await?
                 .error_for_status()?;
@@ -1292,6 +1356,7 @@ fn parse_google_sse_chunk(chunk: &str) -> Result<Option<crate::chat::StreamRespo
                                     content,
                                     tool_calls: None,
                                 },
+                                finish_reason: None,
                             }],
                             usage,
                         }));
@@ -1371,12 +1436,18 @@ impl ModelsProvider for Google {
             return Err(LLMError::AuthError("Missing Google API key".to_string()));
         }
 
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models?key={}",
-            self.config.api_key
-        );
-
-        let resp = self.client.get(&url).send().await?.error_for_status()?;
+        let url = match &self.config.vertex_ai_base_url {
+            Some(base) => format!("{}/publishers/google/models", base),
+            None => format!(
+                "https://generativelanguage.googleapis.com/v1beta/models?key={}",
+                self.config.api_key
+            ),
+        };
+        let resp = self
+            .apply_auth(self.client.get(&url))
+            .send()
+            .await?
+            .error_for_status()?;
 
         let result: GoogleModelListResponse = resp.json().await?;
         Ok(Box::new(result))

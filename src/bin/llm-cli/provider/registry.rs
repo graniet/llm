@@ -82,6 +82,7 @@ fn builtin_provider_list() -> Vec<ProviderInfo> {
         provider_info("huggingface", "HuggingFace", LLMBackend::HuggingFace),
         provider_info("aws-bedrock", "AWS Bedrock", LLMBackend::AwsBedrock),
         provider_info("elevenlabs", "ElevenLabs", LLMBackend::ElevenLabs),
+        provider_info("vertex-ai", "Google Vertex AI", LLMBackend::VertexAI),
     ]
 }
 
@@ -107,6 +108,7 @@ fn provider_capabilities(backend: &LLMBackend) -> ProviderCapabilities {
         | LLMBackend::HuggingFace
         | LLMBackend::Anthropic => ProviderCapabilities::FULL,
         LLMBackend::Google | LLMBackend::AwsBedrock => ProviderCapabilities::TOOLS_NO_STREAM,
+        LLMBackend::VertexAI => ProviderCapabilities::FULL,
         LLMBackend::Ollama => ProviderCapabilities::LOCAL_BASIC,
         LLMBackend::Phind => ProviderCapabilities::STREAM_ONLY,
         LLMBackend::ElevenLabs => ProviderCapabilities::NONE,

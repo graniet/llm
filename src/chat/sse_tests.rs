@@ -133,3 +133,31 @@ fn create_mock_response(chunks: Vec<Result<Bytes, reqwest::Error>>) -> reqwest::
 
     http_response.into()
 }
+
+#[test]
+fn line_buffer_keeps_a_line_split_inside_the_data_prefix() {
+    let mut lines = super::SseLineBuffer::default();
+    assert!(lines.push(b"data: {\"a\":1}\n\nda").len() == 2);
+    assert_eq!(
+        lines.push(b"ta: {\"b\":2}\n\n"),
+        vec!["data: {\"b\":2}", ""]
+    );
+}
+
+#[test]
+fn line_buffer_keeps_a_split_multibyte_character_and_strips_crlf() {
+    let text = "data: f\u{fc}r \u{2705}\r\n\r\n".as_bytes();
+    let mut lines = super::SseLineBuffer::default();
+    let mut out = Vec::new();
+    for byte in text {
+        out.extend(lines.push(std::slice::from_ref(byte)));
+    }
+    assert_eq!(out, vec!["data: f\u{fc}r \u{2705}", ""]);
+}
+
+#[test]
+fn line_buffer_holds_an_unterminated_line() {
+    let mut lines = super::SseLineBuffer::default();
+    assert!(lines.push(b"data: {\"partial\"").is_empty());
+    assert_eq!(lines.push(b":true}\n"), vec!["data: {\"partial\":true}"]);
+}

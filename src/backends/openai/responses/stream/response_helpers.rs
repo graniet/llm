@@ -25,6 +25,7 @@ pub(super) fn stream_response_text(delta: String) -> StreamResponse {
                 content: Some(delta),
                 tool_calls: None,
             },
+            finish_reason: None,
         }],
         usage: None,
     }
@@ -37,6 +38,7 @@ pub(super) fn stream_response_tool_call(tool_call: ToolCall) -> StreamResponse {
                 content: None,
                 tool_calls: Some(vec![tool_call]),
             },
+            finish_reason: None,
         }],
         usage: None,
     }
@@ -49,6 +51,7 @@ pub(super) fn stream_response_usage(usage: Usage) -> StreamResponse {
                 content: None,
                 tool_calls: None,
             },
+            finish_reason: None,
         }],
         usage: Some(usage),
     }

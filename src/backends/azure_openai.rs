@@ -20,14 +20,14 @@ use crate::{
     tts::TextToSpeechProvider,
     LLMProvider,
 };
-#[cfg(feature = "azure_openai")]
-use futures::{Stream, StreamExt};
 use crate::{
     chat::{ChatResponse, ToolChoice},
     FunctionCall, ToolCall,
 };
 use async_trait::async_trait;
 use either::*;
+#[cfg(feature = "azure_openai")]
+use futures::{Stream, StreamExt};
 use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +40,9 @@ pub struct AzureOpenAIConfig {
     pub api_version: Option<String>,
     /// Base URL for API requests.
     pub base_url: Url,
+    /// Resource endpoint (`https://<resource>.services.ai.azure.com/`) for the
+    /// model inference (`models/...`) and provider (`providers/...`) routes.
+    pub endpoint: Url,
     /// Model identifier.
     pub model: String,
     /// Maximum tokens to generate in responses.
@@ -205,7 +208,10 @@ struct OpenAIEmbeddingRequest {
 struct AzureOpenAIChatRequest<'a> {
     model: &'a str,
     messages: Vec<AzureOpenAIChatMessage<'a>>,
-    #[serde(rename = "max_completion_tokens", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "max_completion_tokens",
+        skip_serializing_if = "Option::is_none"
+    )]
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
@@ -252,6 +258,107 @@ struct AzureOpenAIEmbeddingData {
 #[derive(Deserialize, Debug)]
 struct OpenAIEmbeddingResponse {
     data: Vec<AzureOpenAIEmbeddingData>,
+}
+
+/// Most texts one Cohere embed call accepts.
+const COHERE_EMBED_MAX_INPUTS: usize = 96;
+/// Most documents one Cohere rerank call accepts.
+const COHERE_RERANK_MAX_DOCUMENTS: usize = 1000;
+/// API version of the model inference route (`models/embeddings`).
+const MODELS_API_VERSION: &str = "2024-05-01-preview";
+
+/// Request for embedding several texts in one call (Cohere embed models).
+#[derive(Debug, Clone)]
+pub struct EmbeddingBatchRequest {
+    /// Texts to embed, 1..=96
+    pub inputs: Vec<String>,
+    /// Cohere input type (`search_query`, `search_document`, or Azure's `query`,
+    /// `document`, `text`); omitted when `None`
+    pub input_type: Option<String>,
+}
+
+/// Response from batched embedding generation
+#[derive(Debug, Clone)]
+pub struct EmbeddingBatchResponse {
+    /// One embedding per input, in input order
+    pub embeddings: Vec<Vec<f32>>,
+    /// Prompt tokens, when the service reports usage
+    pub prompt_tokens: Option<u32>,
+}
+
+/// Request to rerank documents against a query
+#[derive(Debug, Clone)]
+pub struct RerankRequest {
+    /// Query the documents are ranked against
+    pub query: String,
+    /// Documents to rank, 1..=1000
+    pub documents: Vec<String>,
+    /// Number of results to return; the service returns all documents when `None`
+    pub top_n: Option<usize>,
+}
+
+/// One ranked document
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub struct RerankResult {
+    /// Index into the request's `documents`
+    pub index: usize,
+    /// Relevance score, higher is better
+    pub relevance_score: f64,
+}
+
+/// Response from reranking
+#[derive(Debug, Clone)]
+pub struct RerankResponse {
+    /// Ranked documents, best first
+    pub results: Vec<RerankResult>,
+}
+
+#[derive(Serialize)]
+struct ModelsEmbeddingRequest<'a> {
+    model: &'a str,
+    input: &'a [String],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input_type: Option<&'a str>,
+}
+
+#[derive(Deserialize)]
+struct ModelsEmbeddingData {
+    embedding: Vec<f32>,
+    index: usize,
+}
+
+#[derive(Deserialize)]
+struct ModelsEmbeddingUsage {
+    prompt_tokens: u32,
+}
+
+#[derive(Deserialize)]
+struct ModelsEmbeddingResponse {
+    data: Vec<ModelsEmbeddingData>,
+    usage: Option<ModelsEmbeddingUsage>,
+}
+
+#[derive(Serialize)]
+struct CohereRerankBody<'a> {
+    model: &'a str,
+    query: &'a str,
+    documents: &'a [String],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_n: Option<usize>,
+}
+
+#[derive(Deserialize)]
+struct CohereRerankResponse {
+    results: Vec<RerankResult>,
+}
+
+/// Azure's name for a Cohere input type; Azure names pass through unchanged.
+fn azure_input_type(input_type: &str) -> &str {
+    match input_type {
+        "search_query" => "query",
+        "search_document" => "document",
+        other => other,
+    }
 }
 
 #[derive(Debug, Default)]
@@ -481,6 +588,8 @@ impl AzureOpenAI {
                 api_version,
                 base_url: Url::parse(&format!("{endpoint}/openai/v1/"))
                     .expect("Failed to parse base Url"),
+                endpoint: Url::parse(&format!("{}/", endpoint.trim_end_matches('/')))
+                    .expect("Failed to parse endpoint Url"),
                 model: model.unwrap_or(deployment_id),
                 max_tokens,
                 temperature,
@@ -509,6 +618,10 @@ impl AzureOpenAI {
 
     pub fn base_url(&self) -> &Url {
         &self.config.base_url
+    }
+
+    pub fn endpoint(&self) -> &Url {
+        &self.config.endpoint
     }
 
     pub fn model(&self) -> &str {
@@ -565,6 +678,106 @@ impl AzureOpenAI {
 
     pub fn client(&self) -> &Client {
         &self.client
+    }
+
+    /// Embed 1..=96 texts in one call through the model inference route, with the
+    /// configured model as deployment.
+    pub async fn embed_batch_request(
+        &self,
+        request: EmbeddingBatchRequest,
+    ) -> Result<EmbeddingBatchResponse, LLMError> {
+        let expected = request.inputs.len();
+        if expected == 0 || expected > COHERE_EMBED_MAX_INPUTS {
+            return Err(LLMError::InvalidRequest(format!(
+                "cohere embed takes 1..={COHERE_EMBED_MAX_INPUTS} texts"
+            )));
+        }
+        let mut url = self
+            .config
+            .endpoint
+            .join("models/embeddings")
+            .map_err(|e| LLMError::HttpError(e.to_string()))?;
+        url.query_pairs_mut()
+            .append_pair("api-version", MODELS_API_VERSION);
+        let body = ModelsEmbeddingRequest {
+            model: &self.config.model,
+            input: &request.inputs,
+            input_type: request.input_type.as_deref().map(azure_input_type),
+        };
+
+        let mut response: ModelsEmbeddingResponse = self.post_json(url, &body).await?;
+        response.data.sort_by_key(|d| d.index);
+        if response.data.len() != expected
+            || response.data.iter().enumerate().any(|(i, d)| d.index != i)
+        {
+            return Err(LLMError::ProviderError(format!(
+                "Expected one embedding per input ({expected}), got indices {:?}",
+                response.data.iter().map(|d| d.index).collect::<Vec<_>>()
+            )));
+        }
+
+        Ok(EmbeddingBatchResponse {
+            embeddings: response.data.into_iter().map(|d| d.embedding).collect(),
+            prompt_tokens: response.usage.map(|u| u.prompt_tokens),
+        })
+    }
+
+    /// Rank 1..=1000 documents against a query through the Cohere provider route,
+    /// with the configured model as deployment.
+    pub async fn rerank_request(&self, request: RerankRequest) -> Result<RerankResponse, LLMError> {
+        if request.documents.is_empty() || request.documents.len() > COHERE_RERANK_MAX_DOCUMENTS {
+            return Err(LLMError::InvalidRequest(format!(
+                "cohere rerank takes 1..={COHERE_RERANK_MAX_DOCUMENTS} documents"
+            )));
+        }
+        let url = self
+            .config
+            .endpoint
+            .join("providers/cohere/v2/rerank")
+            .map_err(|e| LLMError::HttpError(e.to_string()))?;
+        let body = CohereRerankBody {
+            model: &self.config.model,
+            query: &request.query,
+            documents: &request.documents,
+            top_n: request.top_n,
+        };
+
+        let mut response: CohereRerankResponse = self.post_json(url, &body).await?;
+        response
+            .results
+            .sort_by(|a, b| b.relevance_score.total_cmp(&a.relevance_score));
+        Ok(RerankResponse {
+            results: response.results,
+        })
+    }
+
+    async fn post_json<T: serde::de::DeserializeOwned>(
+        &self,
+        url: Url,
+        body: &impl Serialize,
+    ) -> Result<T, LLMError> {
+        if self.config.api_key.is_empty() {
+            return Err(LLMError::AuthError("Missing Azure OpenAI API key".into()));
+        }
+        let response = self
+            .client
+            .post(url)
+            .header("api-key", &self.config.api_key)
+            .json(body)
+            .send()
+            .await?;
+        let status = response.status();
+        let text = response.text().await?;
+        if !status.is_success() {
+            return Err(LLMError::ResponseFormatError {
+                message: format!("Azure API returned error status: {status}"),
+                raw_response: text,
+            });
+        }
+        serde_json::from_str(&text).map_err(|e| LLMError::ResponseFormatError {
+            message: format!("Failed to decode Azure API response: {e}"),
+            raw_response: text,
+        })
     }
 }
 
@@ -674,18 +887,23 @@ fn create_azure_sse_stream_with_tools(
     let bytes_stream = response.bytes_stream();
     let stream = bytes_stream
         .scan(
-            (String::new(), HashMap::<usize, AzureToolUseState>::new()),
-            |(event_buffer, tool_states), chunk| {
+            (
+                String::new(),
+                HashMap::<usize, AzureToolUseState>::new(),
+                crate::chat::SseLineBuffer::default(),
+            ),
+            |(event_buffer, tool_states, lines), chunk| {
                 let results = match chunk {
                     Ok(bytes) => {
-                        let text = String::from_utf8_lossy(&bytes);
                         let mut results = Vec::new();
-                        for line in text.lines() {
+                        for line in lines.push(&bytes) {
                             let line = line.trim_end();
                             if line.is_empty() {
                                 if !event_buffer.is_empty() {
-                                    match parse_azure_sse_chunk_with_tools(event_buffer, tool_states)
-                                    {
+                                    match parse_azure_sse_chunk_with_tools(
+                                        event_buffer,
+                                        tool_states,
+                                    ) {
                                         Ok(chunks) => results.extend(chunks.into_iter().map(Ok)),
                                         Err(e) => results.push(Err(e)),
                                     }
@@ -809,10 +1027,10 @@ impl ChatProvider for AzureOpenAI {
             .join("chat/completions")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
-            if let Some(api_version) = &self.config.api_version {
-                url.query_pairs_mut()
-                    .append_pair("api-version", api_version);
-            }
+        if let Some(api_version) = &self.config.api_version {
+            url.query_pairs_mut()
+                .append_pair("api-version", api_version);
+        }
 
         log::info!("Azure OpenAI HTTP Request {}", url);
         let mut request = self
@@ -1153,10 +1371,10 @@ impl EmbeddingProvider for AzureOpenAI {
             .join("embeddings")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
-            if let Some(api_version) = &self.config.api_version {
-                url.query_pairs_mut()
-                    .append_pair("api-version", api_version);
-            }
+        if let Some(api_version) = &self.config.api_version {
+            url.query_pairs_mut()
+                .append_pair("api-version", api_version);
+        }
 
         let resp = self
             .client
@@ -1216,10 +1434,10 @@ impl ModelsProvider for AzureOpenAI {
             .join("models")
             .map_err(|e| LLMError::HttpError(e.to_string()))?;
 
-            if let Some(api_version) = &self.config.api_version {
-                url.query_pairs_mut()
-                    .append_pair("api-version", api_version);
-            }
+        if let Some(api_version) = &self.config.api_version {
+            url.query_pairs_mut()
+                .append_pair("api-version", api_version);
+        }
 
         let mut request = self.client.get(url).header("api-key", &self.config.api_key);
 
@@ -1261,8 +1479,7 @@ mod tests {
             if partial_json == "{\"city\":\"Paris\"}"
         ));
 
-        let finish =
-            r#"data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#;
+        let finish = r#"data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#;
         let chunks = parse_azure_sse_chunk_with_tools(finish, &mut tool_states).unwrap();
         assert_eq!(chunks.len(), 2);
         assert!(matches!(
@@ -1302,5 +1519,211 @@ mod tests {
         );
 
         assert_eq!(client.config.model, "my-deployment");
+    }
+
+    fn foundry_client(endpoint: &str, model: &str) -> AzureOpenAI {
+        AzureOpenAI::with_client(
+            Client::new(),
+            "test-key",
+            None,
+            model,
+            endpoint,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
+    #[test]
+    fn maps_cohere_input_types_to_azure_names() {
+        assert_eq!(azure_input_type("search_query"), "query");
+        assert_eq!(azure_input_type("search_document"), "document");
+        assert_eq!(azure_input_type("text"), "text");
+    }
+
+    #[tokio::test]
+    async fn embed_batch_posts_model_inference_route_and_orders_by_index() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/models/embeddings")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "api-version".into(),
+                "2024-05-01-preview".into(),
+            ))
+            .match_header("api-key", "test-key")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "model": "Cohere-embed-v3-multilingual",
+                "input": ["a", "b"],
+                "input_type": "query"
+            })))
+            .with_body(
+                r#"{"data":[{"embedding":[2.0],"index":1},{"embedding":[1.0],"index":0}],"usage":{"prompt_tokens":7}}"#,
+            )
+            .create_async()
+            .await;
+
+        let response = foundry_client(&server.url(), "Cohere-embed-v3-multilingual")
+            .embed_batch_request(EmbeddingBatchRequest {
+                inputs: vec!["a".into(), "b".into()],
+                input_type: Some("search_query".into()),
+            })
+            .await
+            .unwrap();
+
+        mock.assert_async().await;
+        assert_eq!(response.embeddings, vec![vec![1.0], vec![2.0]]);
+        assert_eq!(response.prompt_tokens, Some(7));
+    }
+
+    #[tokio::test]
+    async fn embed_batch_omits_absent_input_type() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/models/embeddings")
+            .match_query(mockito::Matcher::Any)
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "model": "m",
+                "input": ["a"]
+            })))
+            .with_body(r#"{"data":[{"embedding":[1.0],"index":0}]}"#)
+            .create_async()
+            .await;
+
+        let response = foundry_client(&server.url(), "m")
+            .embed_batch_request(EmbeddingBatchRequest {
+                inputs: vec!["a".into()],
+                input_type: None,
+            })
+            .await
+            .unwrap();
+
+        mock.assert_async().await;
+        assert_eq!(response.prompt_tokens, None);
+    }
+
+    #[tokio::test]
+    async fn embed_batch_rejects_missing_vectors() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("POST", "/models/embeddings")
+            .match_query(mockito::Matcher::Any)
+            .with_body(r#"{"data":[{"embedding":[1.0],"index":0}]}"#)
+            .create_async()
+            .await;
+
+        let result = foundry_client(&server.url(), "m")
+            .embed_batch_request(EmbeddingBatchRequest {
+                inputs: vec!["a".into(), "b".into()],
+                input_type: None,
+            })
+            .await;
+
+        assert!(matches!(result, Err(LLMError::ProviderError(_))));
+    }
+
+    #[tokio::test]
+    async fn embed_batch_rejects_empty_and_over_96_inputs() {
+        let client = foundry_client("http://127.0.0.1:9", "m");
+        for inputs in [vec![], vec!["x".to_string(); 97]] {
+            let result = client
+                .embed_batch_request(EmbeddingBatchRequest {
+                    inputs,
+                    input_type: None,
+                })
+                .await;
+            assert!(matches!(result, Err(LLMError::InvalidRequest(_))));
+        }
+    }
+
+    #[tokio::test]
+    async fn embed_batch_surfaces_error_status() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("POST", "/models/embeddings")
+            .match_query(mockito::Matcher::Any)
+            .with_status(429)
+            .with_body("slow down")
+            .create_async()
+            .await;
+
+        let result = foundry_client(&server.url(), "m")
+            .embed_batch_request(EmbeddingBatchRequest {
+                inputs: vec!["a".into()],
+                input_type: None,
+            })
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(LLMError::ResponseFormatError { raw_response, .. }) if raw_response == "slow down"
+        ));
+    }
+
+    #[tokio::test]
+    async fn rerank_posts_cohere_route_and_returns_best_first() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/providers/cohere/v2/rerank")
+            .match_header("api-key", "test-key")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "model": "Cohere-rerank-v4.0-fast",
+                "query": "q",
+                "documents": ["a", "b"],
+                "top_n": 2
+            })))
+            .with_body(
+                r#"{"id":"x","results":[{"index":0,"relevance_score":0.1},{"index":1,"relevance_score":0.9}]}"#,
+            )
+            .create_async()
+            .await;
+
+        let response = foundry_client(&format!("{}/", server.url()), "Cohere-rerank-v4.0-fast")
+            .rerank_request(RerankRequest {
+                query: "q".into(),
+                documents: vec!["a".into(), "b".into()],
+                top_n: Some(2),
+            })
+            .await
+            .unwrap();
+
+        mock.assert_async().await;
+        assert_eq!(
+            response.results,
+            vec![
+                RerankResult {
+                    index: 1,
+                    relevance_score: 0.9
+                },
+                RerankResult {
+                    index: 0,
+                    relevance_score: 0.1
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn rerank_rejects_empty_and_over_1000_documents() {
+        let client = foundry_client("http://127.0.0.1:9", "m");
+        for documents in [vec![], vec!["d".to_string(); 1001]] {
+            let result = client
+                .rerank_request(RerankRequest {
+                    query: "q".into(),
+                    documents,
+                    top_n: None,
+                })
+                .await;
+            assert!(matches!(result, Err(LLMError::InvalidRequest(_))));
+        }
     }
 }
