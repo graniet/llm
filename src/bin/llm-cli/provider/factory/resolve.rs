@@ -125,6 +125,7 @@ fn backend_label(backend: &LLMBackend) -> String {
         LLMBackend::Phind => "phind",
         LLMBackend::ElevenLabs => "elevenlabs",
         LLMBackend::AwsBedrock => "aws-bedrock",
+        LLMBackend::VertexAI => "vertex-ai",
     }
     .to_string()
 }

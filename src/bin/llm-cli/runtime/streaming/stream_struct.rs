@@ -1,5 +1,4 @@
 use futures::StreamExt;
-use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use llm::chat::StreamResponse;
@@ -8,12 +7,12 @@ use llm::error::LLMError;
 use crate::conversation::ToolInvocation;
 use crate::runtime::{AppEvent, StreamEvent};
 
-use super::helpers::{flush_text, flush_text_if_needed};
+use super::helpers::{flush_text, flush_text_if_needed, EmittingSender};
 use super::manager::StreamRequest;
 
 pub async fn stream_struct(
     request: &StreamRequest,
-    sender: &mpsc::Sender<AppEvent>,
+    sender: &EmittingSender<'_>,
     cancel: &CancellationToken,
 ) -> Result<(), LLMError> {
     let mut stream = request
@@ -34,7 +33,7 @@ pub async fn stream_struct(
 async fn handle_chunk(
     chunk: StreamResponse,
     request: &StreamRequest,
-    sender: &mpsc::Sender<AppEvent>,
+    sender: &EmittingSender<'_>,
     buffer: &mut String,
 ) {
     handle_usage(&chunk, request, sender).await;
@@ -44,7 +43,7 @@ async fn handle_chunk(
 async fn handle_usage(
     chunk: &StreamResponse,
     request: &StreamRequest,
-    sender: &mpsc::Sender<AppEvent>,
+    sender: &EmittingSender<'_>,
 ) {
     let Some(usage) = chunk.usage.clone() else {
         return;
@@ -60,7 +59,7 @@ async fn handle_usage(
 async fn handle_delta(
     chunk: &StreamResponse,
     request: &StreamRequest,
-    sender: &mpsc::Sender<AppEvent>,
+    sender: &EmittingSender<'_>,
     buffer: &mut String,
 ) {
     let Some(choice) = chunk.choices.first() else {

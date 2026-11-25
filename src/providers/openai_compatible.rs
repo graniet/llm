@@ -913,30 +913,31 @@ fn create_openai_tool_stream(
     let stream = response
         .bytes_stream()
         .scan(
-            (String::new(), HashMap::<usize, OpenAIToolUseState>::new()),
-            move |(buffer, tool_states), chunk| {
+            (
+                String::new(),
+                HashMap::<usize, OpenAIToolUseState>::new(),
+                crate::chat::SseLineBuffer::default(),
+            ),
+            move |(event_buffer, tool_states, lines), chunk| {
                 let result = match chunk {
                     Ok(bytes) => {
-                        let text = String::from_utf8_lossy(&bytes);
-                        buffer.push_str(&text);
-
                         let mut results = Vec::new();
 
-                        // Process complete SSE events (separated by double newlines)
-                        while let Some(pos) = buffer.find("\n\n") {
-                            let event = buffer[..pos].to_string();
-                            buffer.drain(..pos + 2);
-
-                            // Also handle \r\n\r\n
-                            let event = event.trim();
-                            if event.is_empty() {
+                        // A blank line ends an SSE event.
+                        for line in lines.push(&bytes) {
+                            if !line.trim().is_empty() {
+                                event_buffer.push_str(&line);
+                                event_buffer.push('\n');
                                 continue;
                             }
-
-                            match parse_openai_sse_chunk_with_tools(event, tool_states) {
-                                Ok(chunks) => results.extend(chunks.into_iter().map(Ok)),
-                                Err(e) => results.push(Err(e)),
+                            let event = event_buffer.trim();
+                            if !event.is_empty() {
+                                match parse_openai_sse_chunk_with_tools(event, tool_states) {
+                                    Ok(chunks) => results.extend(chunks.into_iter().map(Ok)),
+                                    Err(e) => results.push(Err(e)),
+                                }
                             }
+                            event_buffer.clear();
                         }
 
                         Some(results)
@@ -1188,6 +1189,7 @@ pub fn create_sse_stream(
                             content: None,
                             tool_calls: Some(vec![self.tool_buffer.clone()]),
                         },
+                        finish_reason: None,
                     }],
                     usage: None,
                 }));
@@ -1216,6 +1218,7 @@ pub fn create_sse_stream(
                                         content: None,
                                         tool_calls: None,
                                     },
+                                    finish_reason: None,
                                 }],
                                 usage: Some(usage),
                             }));
@@ -1283,6 +1286,7 @@ pub fn create_sse_stream(
                                         content,
                                         tool_calls,
                                     },
+                                    finish_reason: None,
                                 }],
                                 usage: None,
                             }));
@@ -1295,27 +1299,32 @@ pub fn create_sse_stream(
 
     let bytes_stream = response.bytes_stream();
     let stream = bytes_stream
-        .scan(SSEStreamParser::new(normalize_response), |parser, chunk| {
-            let results = match chunk {
-                Ok(bytes) => {
-                    let text = String::from_utf8_lossy(&bytes);
-                    for line in text.lines() {
-                        let line = line.trim_end();
-                        if line.is_empty() {
-                            // Blank line: end of event, parse accumulated event_buffer
-                            parser.parse_event();
-                            parser.event_buffer.clear();
-                        } else {
-                            parser.event_buffer.push_str(line);
-                            parser.event_buffer.push('\n');
+        .scan(
+            (
+                SSEStreamParser::new(normalize_response),
+                crate::chat::SseLineBuffer::default(),
+            ),
+            |(parser, lines), chunk| {
+                let results = match chunk {
+                    Ok(bytes) => {
+                        for line in lines.push(&bytes) {
+                            let line = line.trim_end();
+                            if line.is_empty() {
+                                // Blank line: end of event, parse accumulated event_buffer
+                                parser.parse_event();
+                                parser.event_buffer.clear();
+                            } else {
+                                parser.event_buffer.push_str(line);
+                                parser.event_buffer.push('\n');
+                            }
                         }
+                        parser.results.drain(..).collect::<Vec<_>>()
                     }
-                    parser.results.drain(..).collect::<Vec<_>>()
-                }
-                Err(e) => vec![Err(LLMError::HttpError(e.to_string()))],
-            };
-            futures::future::ready(Some(results))
-        })
+                    Err(e) => vec![Err(LLMError::HttpError(e.to_string()))],
+                };
+                futures::future::ready(Some(results))
+            },
+        )
         .flat_map(futures::stream::iter);
     Box::pin(stream)
 }
@@ -1323,6 +1332,50 @@ pub fn create_sse_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn split_response(body: &[u8], at: usize) -> reqwest::Response {
+        use http_body_util::StreamBody;
+        let chunks: Vec<Result<hyper::body::Frame<bytes::Bytes>, std::io::Error>> = body
+            .chunks(at)
+            .map(|c| Ok(hyper::body::Frame::data(bytes::Bytes::copy_from_slice(c))))
+            .collect();
+        let body = reqwest::Body::wrap(StreamBody::new(futures::stream::iter(chunks)));
+        http::Response::builder()
+            .status(200)
+            .body(body)
+            .unwrap()
+            .into()
+    }
+
+    /// A network read may end anywhere in an SSE line, even inside `data: `;
+    /// no read size may drop or garble a delta.
+    #[tokio::test]
+    async fn create_sse_stream_keeps_every_delta_whatever_the_read_size() {
+        let pieces = [
+            "{\"existing_",
+            "plan_id\": ",
+            "\"cluster-issues\"",
+            " f\u{fc}r \u{2705}",
+            "}",
+        ];
+        let mut body = String::new();
+        for piece in pieces {
+            body.push_str(&format!(
+                "data: {{\"choices\":[{{\"delta\":{{\"content\":{}}}}}]}}\r\n\r\n",
+                serde_json::to_string(piece).unwrap()
+            ));
+        }
+        body.push_str("data: [DONE]\n\n");
+        for at in 1..=body.len() {
+            let stream = create_sse_stream(split_response(body.as_bytes(), at), false);
+            let text: String = stream
+                .filter_map(|r| async move { r.ok()?.choices.first()?.delta.content.clone() })
+                .collect::<Vec<_>>()
+                .await
+                .concat();
+            assert_eq!(text, pieces.concat(), "read size {at}");
+        }
+    }
 
     #[test]
     fn test_parse_openai_stream_text_delta() {

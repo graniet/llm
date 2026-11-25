@@ -292,6 +292,72 @@ pub struct EmbeddingResponse {
     pub dimensions: usize,
 }
 
+/// Request for embedding several texts in one Bedrock call (Cohere embed models only)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingBatchRequest {
+    /// Texts to embed, 1..=96
+    pub inputs: Vec<String>,
+
+    /// Optional model to use
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<BedrockModel>,
+
+    /// Cohere input type; defaults to `search_document`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_type: Option<String>,
+}
+
+/// Response from batched embedding generation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingBatchResponse {
+    /// One embedding per input, in input order
+    pub embeddings: Vec<Vec<f64>>,
+
+    /// Model used
+    pub model: BedrockModel,
+
+    /// Number of dimensions of each embedding
+    pub dimensions: usize,
+}
+
+/// Request to rerank documents against a query
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RerankRequest {
+    /// Query the documents are ranked against
+    pub query: String,
+
+    /// Documents to rank, 1..=1000
+    pub documents: Vec<String>,
+
+    /// Number of results to return; defaults to all documents
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_n: Option<usize>,
+
+    /// Optional model to use
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<BedrockModel>,
+}
+
+/// One ranked document
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RerankResult {
+    /// Index into the request's `documents`
+    pub index: usize,
+
+    /// Relevance score, higher is better
+    pub relevance_score: f64,
+}
+
+/// Response from reranking, best first
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RerankResponse {
+    /// Ranked documents, best first
+    pub results: Vec<RerankResult>,
+
+    /// Model used
+    pub model: BedrockModel,
+}
+
 /// Token usage information
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct UsageInfo {

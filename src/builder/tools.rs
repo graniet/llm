@@ -215,9 +215,7 @@ mod tests {
 
     #[test]
     fn tool_serialization_omits_cache_control_when_none() {
-        let tool = FunctionBuilder::new("my_tool")
-            .description("desc")
-            .build();
+        let tool = FunctionBuilder::new("my_tool").description("desc").build();
 
         let json = serde_json::to_value(&tool).unwrap();
         assert!(json.get("cache_control").is_none());

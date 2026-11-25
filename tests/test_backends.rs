@@ -1142,8 +1142,8 @@ async fn test_anthropic_chat_stream_with_tools() {
                             StreamChunk::Done { stop_reason: sr } => {
                                 stop_reason = Some(sr);
                             }
-                            StreamChunk::ToolUseInputDelta { .. } => {
-                                // These are intermediate chunks, we don't need to collect them
+                            StreamChunk::ToolUseInputDelta { .. } | StreamChunk::Usage(_) => {
+                                // Intermediate chunks and usage, not needed here
                             }
                         }
                     }

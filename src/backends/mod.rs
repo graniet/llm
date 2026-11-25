@@ -42,3 +42,6 @@ pub mod huggingface;
 
 #[cfg(feature = "bedrock")]
 pub mod aws;
+
+#[cfg(feature = "vertex_ai")]
+pub mod vertex_ai;

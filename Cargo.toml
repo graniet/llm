@@ -35,9 +35,10 @@ full = [
     "openrouter",
     "huggingface",
     "bedrock",
+    "vertex_ai",
 ]
 openai = []
-anthropic = []
+anthropic = ["dep:jsonschema"]
 ollama = []
 deepseek = []
 xai = []
@@ -50,12 +51,12 @@ mistral = []
 openrouter = []
 huggingface = []
 bedrock = [
-    "dep:awc",
     "dep:aws-config",
     "dep:aws-credential-types",
     "dep:aws-sdk-bedrockruntime",
     "dep:aws-smithy-types",
 ]
+vertex_ai = []
 cli = [
     "full",
     "dep:anyhow",
@@ -94,6 +95,7 @@ audio-example = [
 ]
 
 [dependencies]
+jsonschema = { version = "0.17.1", default-features = false, features = ["draft201909", "draft202012"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = { version = "0.11.19" }
 reqwest = { version = "0.12.12", default-features = false, features = ["json", "multipart", "stream"] }
@@ -134,7 +136,6 @@ hound = { version = "3.5", optional = true }
 parking_lot = { version = "0.12", optional = true }
 chrono = {version = "0.4", default-features = false, features = ["serde"]}
 rand = "0.8"
-awc = { version = "3.7.0", features = ["rustls-0_23-native-roots"], optional = true }
 aws-config = { version = "1.7.15", optional = true }
 aws-sdk-bedrockruntime = { version = "1.129.0", optional = true }
 aws-credential-types = { version = "1.2.14", optional = true }

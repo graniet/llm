@@ -94,6 +94,36 @@ impl SseState {
     }
 }
 
+/// Splits a byte stream into complete SSE lines.
+///
+/// A network read can end anywhere, including inside a line (`da` | `ta: {...}`)
+/// or a multi-byte UTF-8 character. Splitting each read on its own line breaks
+/// such a line into two broken ones, and the event they carried is
+/// dropped. This keeps the unterminated tail until the read that completes it.
+#[derive(Default)]
+pub(crate) struct SseLineBuffer {
+    pending: Vec<u8>,
+}
+
+impl SseLineBuffer {
+    /// Appends `bytes` and returns every line it completed, without its
+    /// `\n` / `\r\n` terminator. An empty string is an event boundary.
+    pub(crate) fn push(&mut self, bytes: &[u8]) -> Vec<String> {
+        self.pending.extend_from_slice(bytes);
+        let Some(last_newline) = self.pending.iter().rposition(|b| *b == b'\n') else {
+            return Vec::new();
+        };
+        let complete: Vec<u8> = self.pending.drain(..=last_newline).collect();
+        complete[..complete.len() - 1]
+            .split(|b| *b == b'\n')
+            .map(|line| {
+                let line = line.strip_suffix(b"\r").unwrap_or(line);
+                String::from_utf8_lossy(line).into_owned()
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 #[path = "sse_tests.rs"]
 mod tests;

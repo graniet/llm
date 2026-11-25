@@ -18,6 +18,7 @@ pub enum LLMBackend {
     OpenRouter,
     HuggingFace,
     AwsBedrock,
+    VertexAI,
 }
 
 impl std::str::FromStr for LLMBackend {
@@ -40,6 +41,7 @@ impl std::str::FromStr for LLMBackend {
             "openrouter" => Ok(LLMBackend::OpenRouter),
             "huggingface" => Ok(LLMBackend::HuggingFace),
             "aws-bedrock" => Ok(LLMBackend::AwsBedrock),
+            "vertex-ai" | "vertexai" => Ok(LLMBackend::VertexAI),
             _ => Err(LLMError::InvalidRequest(format!(
                 "Unknown LLM backend: {s}"
             ))),

@@ -5,6 +5,7 @@ use tokio_util::sync::CancellationToken;
 
 use llm::error::LLMError;
 
+use super::helpers::EmittingSender;
 use super::manager::StreamRequest;
 use crate::runtime::{AppEvent, StreamEvent};
 
@@ -46,13 +47,23 @@ async fn stream_with_fallback(
     sender: &mpsc::Sender<AppEvent>,
     cancel: &CancellationToken,
 ) -> Result<(), LLMError> {
-    if request.capabilities.tool_streaming
-        && stream_with_tools(request, sender, cancel).await.is_ok()
-    {
-        return Ok(());
+    // A fallback attempt must never retry with a different streaming method
+    // once a prior attempt already emitted an event to the UI - the user
+    // would see that attempt's partial output immediately followed by an
+    // unrelated, independent response. `tracker` is shared across attempts so
+    // this holds across the whole chain, not just within one attempt.
+    let tracker = EmittingSender::new(sender);
+    if request.capabilities.tool_streaming {
+        match stream_with_tools(request, &tracker, cancel).await {
+            Ok(()) => return Ok(()),
+            Err(err) if tracker.emitted() => return Err(err),
+            Err(_) => {}
+        }
     }
-    if stream_struct(request, sender, cancel).await.is_ok() {
-        return Ok(());
+    match stream_struct(request, &tracker, cancel).await {
+        Ok(()) => return Ok(()),
+        Err(err) if tracker.emitted() => return Err(err),
+        Err(_) => {}
     }
-    stream_text(request, sender, cancel).await
+    stream_text(request, &tracker, cancel).await
 }

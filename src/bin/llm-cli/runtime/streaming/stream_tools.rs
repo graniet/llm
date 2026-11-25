@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use futures::StreamExt;
-use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use llm::chat::StreamChunk;
@@ -10,12 +9,12 @@ use llm::error::LLMError;
 use crate::conversation::ToolInvocation;
 use crate::runtime::{AppEvent, StreamEvent};
 
-use super::helpers::{flush_text, flush_text_if_needed};
+use super::helpers::{flush_text, flush_text_if_needed, EmittingSender};
 use super::manager::StreamRequest;
 
 pub async fn stream_with_tools(
     request: &StreamRequest,
-    sender: &mpsc::Sender<AppEvent>,
+    sender: &EmittingSender<'_>,
     cancel: &CancellationToken,
 ) -> Result<(), LLMError> {
     let tools = request.provider.tools();
@@ -41,7 +40,7 @@ pub async fn stream_with_tools(
 
 struct StreamContext<'a> {
     request: &'a StreamRequest,
-    sender: &'a mpsc::Sender<AppEvent>,
+    sender: &'a EmittingSender<'a>,
 }
 
 struct ToolStreamState {
@@ -82,6 +81,7 @@ impl ToolStreamState {
                 self.handle_tool_complete(tool_call, ctx).await;
                 Ok(true)
             }
+            StreamChunk::Usage(_) => Ok(true),
             StreamChunk::Done { .. } => Ok(false),
         }
     }

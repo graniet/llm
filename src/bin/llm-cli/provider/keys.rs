@@ -16,6 +16,7 @@ pub fn backend_env_key(backend: &LLMBackend) -> Option<&'static str> {
         LLMBackend::Ollama
         | LLMBackend::Phind
         | LLMBackend::ElevenLabs
-        | LLMBackend::AwsBedrock => None,
+        | LLMBackend::AwsBedrock
+        | LLMBackend::VertexAI => None,
     }
 }
