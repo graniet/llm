@@ -1125,7 +1125,7 @@ pub fn chat_message_to_openai_message(chat_msg: ChatMessage) -> OpenAIChatMessag
                 tool_output: None,
                 tool_call_id: None,
             }])),
-            MessageType::ToolUse(_) => None,
+            MessageType::ToolUse(_) => Some(Right(chat_msg.content.clone())),
             MessageType::ToolResult(_) => None,
         },
         tool_calls: match &chat_msg.message_type {
@@ -1659,6 +1659,39 @@ mod tests {
             matches!(&results[0], ChatStreamChunk::ToolUseComplete { tool_call, .. } if tool_call.function.name == "db_list_databases"),
             "Expected ToolUseComplete, got {:?}",
             results[0]
+        );
+    }
+
+    #[test]
+    fn test_tool_use_message_serializes_content_field() {
+        // Strict OpenAI-compatible APIs (e.g. OpenRouter) reject an assistant
+        // message that carries `tool_calls` but omits `content`. Because
+        // OpenAIChatMessage.content is `skip_serializing_if = "Option::is_none"`,
+        // a `None` here drops the field from the wire entirely. The tool-use arm
+        // must therefore serialize a `content` string, not `None`.
+        let msg = ChatMessage {
+            role: ChatRole::Assistant,
+            message_type: MessageType::ToolUse(vec![ToolCall {
+                id: "call_1".to_string(),
+                call_type: "function".to_string(),
+                function: FunctionCall {
+                    name: "get_weather".to_string(),
+                    arguments: "{\"city\":\"Paris\"}".to_string(),
+                },
+            }]),
+            content: String::new(),
+        };
+
+        let openai_msg = chat_message_to_openai_message(msg);
+        let json = serde_json::to_value(&openai_msg).unwrap();
+
+        assert!(
+            json.get("content").is_some(),
+            "assistant tool_calls message must serialize a `content` field, got: {json}"
+        );
+        assert!(
+            json.get("tool_calls").is_some(),
+            "tool_calls array must still be present alongside content, got: {json}"
         );
     }
 }
